@@ -1,0 +1,7 @@
+reason_code,reason_description
+consent_withdrawn,Participant withdrew their consent to take part in the trial
+eligibility_lost,Participant no longer meets the eligibility criteria for the trial
+clinician_decision,"The clinical team withdrew the participant — safety concern, protocol non-compliance, or other clinical reason"
+death,Participant died during the trial period
+lost_to_follow_up,Participant could not be contacted and did not attend scheduled appointments
+trial_completed,Participant completed the full trial protocol successfully

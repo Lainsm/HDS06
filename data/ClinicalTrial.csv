@@ -1,0 +1,4 @@
+registration_number,trial_name,phase,status,start_date,end_date
+ISRCTN10234567,CARDIOPROTECT: Cardiac Rehabilitation in Post-MI Patients,III,active,01/03/2023,NULL
+ISRCTN20345678,BREATHE: Pulmonary Rehabilitation in COPD,II,recruiting,01/06/2024,NULL
+ISRCTN30456789,MOBILISE: Early Mobilisation Following Hip Replacement,II,completed,01/01/2021,31/12/2024
