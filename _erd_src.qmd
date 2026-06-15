@@ -1,0 +1,87 @@
+---
+format:
+  pdf:
+    papersize: a4
+    pdf-engine: pdflatex
+    geometry:
+      - paperwidth=110cm
+      - paperheight=70cm
+      - margin=20mm
+    include-in-header:
+      text: |
+        \pagestyle{empty}
+        \thispagestyle{empty}
+mermaid:
+  theme: neutral
+---
+
+```{mermaid}
+%%{init: {"theme":"neutral", "er": {"diagramPadding": 60, "entityPadding": 18, "useMaxWidth": false}}}%%
+erDiagram
+    ClinicalTrial      ||--o{ TrialSite       : "runs at"
+    HospitalSite       ||--o{ TrialSite       : "hosts"
+    ClinicalTrial      ||--o{ ConsentVersion  : "has versions"
+    Participant        ||--o{ Enrollment      : "enrols via"
+    TrialSite          ||--o{ Enrollment      : "place of"
+    InactivationReason ||--o{ Enrollment      : "explains exit"
+    Enrollment         ||--o{ ConsentSigning  : "consented by"
+    ConsentVersion     ||--o{ ConsentSigning  : "signed in"
+
+    ClinicalTrial {
+        int trial_id PK
+        varchar registration_number UK
+        nvarchar trial_name
+        varchar phase
+        varchar status
+        date start_date
+        date end_date
+    }
+    HospitalSite {
+        int site_id PK
+        varchar site_code UK
+        nvarchar site_name
+        nvarchar city
+        nvarchar country
+    }
+    Participant {
+        int participant_id PK
+        varchar study_code UK
+        date date_of_birth
+        varchar sex_at_birth
+        date registration_date
+    }
+    InactivationReason {
+        int reason_id PK
+        varchar reason_code UK
+        nvarchar reason_description
+    }
+    TrialSite {
+        int trial_site_id PK
+        int trial_id FK
+        int site_id FK
+        date opened_date
+        date closed_date
+    }
+    ConsentVersion {
+        int consent_version_id PK
+        int trial_id FK
+        int version_number
+        date effective_from
+        nvarchar wording_text
+    }
+    Enrollment {
+        int enrollment_id PK
+        int participant_id FK
+        int trial_site_id FK
+        date enrolment_date
+        date inactivation_date
+        int inactivation_reason_id FK
+    }
+    ConsentSigning {
+        int consent_signing_id PK
+        int enrollment_id FK
+        int consent_version_id FK
+        date signed_date
+        nvarchar witnessed_by
+    }
+```
