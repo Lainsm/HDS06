@@ -1,12 +1,11 @@
 ---
-title: "Designing and Querying a Clinical Trial Participant Registry"
-subtitle: "Westbrook University Hospitals NHS Trust --- Clinical Trial Participant Registry"
-author: "Malik Lainsbury"
+title: "HDS06 - Designing and Querying a Clinical Trial Participant Registry"
+subtitle: "A Clinical Trial Participant Registry for Westbrook University Hospitals NHS Trust (WUH)"
+author: "Malik J. Lainsbury | [github](https://github.com/Lainsm/HDS06)"
 date: today
 format:
   pdf:
-    pdf-engine: pdflatex
-    documentclass: article
+    documentclass: report
     papersize: a4
     geometry:
       - margin=25mm
@@ -16,13 +15,15 @@ format:
     toc-depth: 2
     number-sections: true
     colorlinks: true
-    highlight-style: github
+    syntax-highlighting: dracula
     fig-pos: "H"
     include-in-header:
       text: |
         \usepackage{fvextra}
         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
         \usepackage{float}
+        \usepackage{eso-pic}
+        \AddToShipoutPictureFG*{\AtPageLowerLeft{\put(\LenToUnit{0.5\paperwidth},\LenToUnit{3cm}){\makebox(0,0){\includegraphics[width=0.45\textwidth]{coversheet_image.png}}}}}
 mermaid:
   theme: neutral
 execute:
@@ -48,7 +49,7 @@ confirm correctness.
 
 {{< pagebreak >}}
 
-# Part 1 --- Database Design
+# Part 1: Database Design
 
 ## Entity Relationship Diagram
 
@@ -121,7 +122,7 @@ either entity alone.
 
 {{< pagebreak >}}
 
-# Part 2 --- SQL
+# Part 2: SQL
 
 ## INSERT statements --- one per table
 
@@ -404,7 +405,7 @@ recent" may need a finer timestamp than a date to be unambiguous.
 
 {{< pagebreak >}}
 
-# Part 3 --- Reflection
+# Part 3: Reflection
 
 ## Why no participant names?
 
@@ -475,7 +476,120 @@ any attempted change is itself recorded.
 
 {{< pagebreak >}}
 
-# Appendix --- File manifest {.unnumbered}
+# Appendix A --- Data dictionary {.unnumbered}
+
+A complete column-level reference for every table, derived from
+`script/01_create_tables.sql`. *Key:* PK = primary key, FK = foreign key,
+UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
+
+```{=latex}
+\footnotesize
+```
+
+## ClinicalTrial {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:------------------|:------------|:---------|:---|:------------------------------|
+| `trial_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `registration_number` | VARCHAR(20) | NOT NULL | UK | ISRCTN number; externally recognised natural key. |
+| `trial_name` | NVARCHAR(150) | NOT NULL | | Full trial title. |
+| `phase` | VARCHAR(4) | NOT NULL | | `CHECK` IN ('I','II','III','IV'). |
+| `status` | VARCHAR(20) | NOT NULL | | `CHECK` IN ('recruiting','active','completed','suspended'). |
+| `start_date` | DATE | NOT NULL | | Trial start date. |
+| `end_date` | DATE | NULL | | NULL = ongoing. `CHECK (end_date >= start_date)`. |
+
+: ClinicalTrial {tbl-colwidths="[24,16,11,6,43]"}
+
+## HospitalSite {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:------------|:------------|:---------|:---|:----------------------------------|
+| `site_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `site_code` | VARCHAR(10) | NOT NULL | UK | Short operational code, e.g. `WBK-GEN`. |
+| `site_name` | NVARCHAR(100) | NOT NULL | | Hospital site name. |
+| `city` | NVARCHAR(60) | NOT NULL | | City. |
+| `country` | NVARCHAR(60) | NOT NULL | | Country. |
+
+: HospitalSite {tbl-colwidths="[20,16,11,6,47]"}
+
+## Participant {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:--------------------|:------------|:---------|:---|:--------------------------------|
+| `participant_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `study_code` | VARCHAR(15) | NOT NULL | UK | Pseudonym; only external identifier (no names held). |
+| `date_of_birth` | DATE | NOT NULL | | `CHECK (date_of_birth < registration_date)`. |
+| `sex_at_birth` | VARCHAR(10) | NOT NULL | | `CHECK` IN ('Male','Female','Intersex','Unknown'). |
+| `registration_date` | DATE | NOT NULL | | Date first registered with the research office. |
+
+: Participant {tbl-colwidths="[24,15,11,6,44]"}
+
+## InactivationReason {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:---------------------|:-------------|:---------|:---|:------------------------------|
+| `reason_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `reason_code` | VARCHAR(30) | NOT NULL | UK | Standardised report token, e.g. `consent_withdrawn`. |
+| `reason_description` | NVARCHAR(255) | NOT NULL | | Human-readable description of the reason. |
+
+: InactivationReason {tbl-colwidths="[26,16,11,6,41]"}
+
+## TrialSite (link table) {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:----------------|:------------|:---------|:------|:---------------------------|
+| `trial_site_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `trial_id` | INT | NOT NULL | FK, UK | -> `ClinicalTrial`. Part of `UNIQUE (trial_id, site_id)`. |
+| `site_id` | INT | NOT NULL | FK, UK | -> `HospitalSite`. Part of `UNIQUE (trial_id, site_id)`. |
+| `opened_date` | DATE | NOT NULL | | Date the site opened for recruitment on this trial. |
+| `closed_date` | DATE | NULL | | NULL = still open. `CHECK (closed_date >= opened_date)`. |
+
+: TrialSite {tbl-colwidths="[20,13,11,9,47]"}
+
+## ConsentVersion {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:---------------------|:-------------|:---------|:------|:---------------------------|
+| `consent_version_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `trial_id` | INT | NOT NULL | FK, UK | -> `ClinicalTrial`. Part of `UNIQUE (trial_id, version_number)`. |
+| `version_number` | INT | NOT NULL | UK | `CHECK (version_number > 0)`. Part of the unique key. |
+| `effective_from` | DATE | NOT NULL | | Date this version came into effect. |
+| `wording_text` | NVARCHAR(MAX) | NOT NULL | | Full consent-form wording; never overwritten. |
+
+: ConsentVersion {tbl-colwidths="[26,15,11,9,39]"}
+
+## Enrollment {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:-------------------------|:-----------|:---------|:------|:-----------------------|
+| `enrollment_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `participant_id` | INT | NOT NULL | FK, UK | -> `Participant`. Part of `UNIQUE (participant_id, trial_site_id)`. |
+| `trial_site_id` | INT | NOT NULL | FK, UK | -> `TrialSite` (captures trial and site). Part of the unique key. |
+| `enrolment_date` | DATE | NOT NULL | | Date enrolment began. |
+| `inactivation_date` | DATE | NULL | | NULL = still active. `CHECK (inactivation_date >= enrolment_date)`. |
+| `inactivation_reason_id` | INT | NULL | FK | -> `InactivationReason`. Paired-null `CHECK` with `inactivation_date`. |
+
+: Enrollment. A filtered unique index allows only one active enrolment per participant (`WHERE inactivation_date IS NULL`). {tbl-colwidths="[27,12,10,8,43]"}
+
+## ConsentSigning (append-only) {.unnumbered}
+
+| Column | Type | Null | Key | Notes |
+|:---------------------|:-------------|:---------|:------|:--------------------------|
+| `consent_signing_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
+| `enrollment_id` | INT | NOT NULL | FK, UK | -> `Enrollment`. Part of `UNIQUE (enrollment_id, consent_version_id)`. |
+| `consent_version_id` | INT | NOT NULL | FK, UK | -> `ConsentVersion`. Part of the unique key. |
+| `signed_date` | DATE | NOT NULL | | Date the consent was signed. |
+| `witnessed_by` | NVARCHAR(100) | NOT NULL | | Name/role of the witnessing staff member. |
+
+: ConsentSigning. Protected by an `INSTEAD OF UPDATE, DELETE` trigger so rows can only ever be inserted. {tbl-colwidths="[26,14,10,8,42]"}
+
+```{=latex}
+\normalsize
+```
+
+{{< pagebreak >}}
+
+# Appendix B --- File manifest {.unnumbered}
 
 | File | Contents |
 |:-----------------------------------------|:---------------------------------------|
