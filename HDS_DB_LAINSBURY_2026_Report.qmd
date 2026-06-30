@@ -1,6 +1,6 @@
 ---
 title: "HDS06 - Designing and Querying a Clinical Trial Participant Registry"
-subtitle: "A Clinical Trial Participant Registry for Westbrook University Hospitals NHS Trust (WUH)"
+subtitle: "Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry"
 author: "Malik J. Lainsbury | [github](https://github.com/Lainsm/HDS06)"
 date: today
 format:

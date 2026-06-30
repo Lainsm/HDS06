@@ -46,7 +46,7 @@ been asked to design a relational database to replace this system.
 
 The trust runs multiple clinical trials at any one time. Each trial has
 a unique registration number, a name, a phase (I, II, III, or IV), a
-status --- such as recruiting, active, completed, or suspended --- and a
+status (such as recruiting, active, completed, or suspended) and a
 start date. Current trials are ongoing and therefore have no end date
 yet.
 

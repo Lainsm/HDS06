@@ -1,9 +1,8 @@
 /* ============================================================================
-   HDS_DB_LAINSBURY_2026.sql
-   Westbrook University Hospitals NHS Trust - Clinical Trial Participant Registry
-   Single runnable script: CREATE DATABASE -> CREATE TABLES -> INSERTS ->
-   APPEND-ONLY TRIGGER -> SEVEN QUERIES. Microsoft SQL Server (T-SQL).
-   Run from start to finish in SSMS / Azure Data Studio / VS Code mssql.
+   - HDS_DB_LAINSBURY_2026.sql
+   - Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry
+   - Microsoft SQL Server (T-SQL)
+   - Ran on Linux (Ubuntu 26.04)without error in VS Code using mssql extension.
    ============================================================================ */
 
 
@@ -11,10 +10,10 @@
 
 /* ============================================================================
    00_create_database.sql
-   Westbrook University Hospitals NHS Trust - Clinical Trial Participant Registry
-   ----------------------------------------------------------------------------
-   Creates (or recreates) the database used by the rest of the scripts.
-   Run this FIRST. Microsoft SQL Server (T-SQL).
+   Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry
+   
+   - Script to create the database & tables. Used an IF to allow you to run this script\ 
+   even if you already created the DB from previous classmate assignments.
    ============================================================================ */
 
 IF DB_ID('HDS_ClinicalTrial') IS NOT NULL
@@ -34,26 +33,23 @@ GO
 /* ###################### 01_create_tables.sql ###################### */
 
 /* ============================================================================
-   01_create_tables.sql
-   Schema for the Clinical Trial Participant Registry.
-   Run AFTER 00_create_database.sql.
 
-   Design summary
-   --------------
-   ClinicalTrial      - one row per trial
-   HospitalSite       - one row per hospital site
-   Participant        - one row per pseudonymised participant (no names held)
-   InactivationReason - standardised reasons a participant leaves a trial
-   TrialSite          - link table resolving ClinicalTrial <-> HospitalSite (M:N)
-   ConsentVersion     - each approved version of a trial's consent form
-   Enrollment         - a participant enrolled in a trial at a specific site
-   ConsentSigning     - append-only record of every consent signing event
+   Design summary:
+
+   ClinicalTrial: one row per trial
+   HospitalSite: one row per hospital site
+   Participant: one row per pseudonymised participant (no names held)
+   InactivationReason: standardised reasons a participant leaves a trial
+   TrialSite: link table resolving the M:M -> ClinicalTrial <-> HospitalSite (M:N)
+   ConsentVersion: each approved version of a trial's consent form
+   Enrollment: a participant enrolled in a trial at a specific site
+   ConsentSigning: append-only record of every consent signing event
 
    Every table has a surrogate INT IDENTITY primary key plus one or more
-   business (natural) UNIQUE keys, as recommended in the brief.
+   business (natural) UNIQUE keys (as per recommendation in the brief).
    ============================================================================ */
 
-USE HDS_ClinicalTrial;
+USE HDS_ClinicalTrial; 
 GO
 
 /* Drop in reverse dependency order so the script can be re-run cleanly. */
@@ -72,12 +68,12 @@ GO
    ---------------------------------------------------------------------------- */
 CREATE TABLE dbo.ClinicalTrial (
     trial_id            INT IDENTITY(1,1)   NOT NULL,
-    registration_number VARCHAR(20)         NOT NULL,   -- ISRCTN business key
+    registration_number VARCHAR(20)         NOT NULL,   --ISRCTN business key
     trial_name          NVARCHAR(150)       NOT NULL,
     phase               VARCHAR(4)          NOT NULL,
     status              VARCHAR(20)         NOT NULL,
     start_date          DATE                NOT NULL,
-    end_date            DATE                NULL,        -- NULL = trial ongoing
+    end_date            DATE                NULL,        -- NULL as we can have ongoing trials
     CONSTRAINT PK_ClinicalTrial        PRIMARY KEY (trial_id),
     CONSTRAINT UQ_ClinicalTrial_reg    UNIQUE (registration_number),
     CONSTRAINT CK_ClinicalTrial_phase  CHECK (phase IN ('I','II','III','IV')),
@@ -101,7 +97,7 @@ CREATE TABLE dbo.HospitalSite (
 GO
 
 /* ----------------------------------------------------------------------------
-   Participant  (pseudonymised - no names stored)
+   Participant  (pseudonymised)
    ---------------------------------------------------------------------------- */
 CREATE TABLE dbo.Participant (
     participant_id    INT IDENTITY(1,1) NOT NULL,
@@ -111,7 +107,7 @@ CREATE TABLE dbo.Participant (
     registration_date DATE              NOT NULL,
     CONSTRAINT PK_Participant        PRIMARY KEY (participant_id),
     CONSTRAINT UQ_Participant_code   UNIQUE (study_code),
-    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female','Intersex','Unknown')),
+    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female')), -- could add controlled vocabulary ('Other','Prefer not to say') if desired but this is sex at birth and not gender
     CONSTRAINT CK_Participant_dob    CHECK (date_of_birth < registration_date)
 );
 GO
@@ -219,17 +215,17 @@ GO
 /* ###################### 02_insert_reference_data.sql ###################### */
 
 /* ============================================================================
-   02_insert_reference_data.sql
-   Reference data supplied with the brief (the five sheets).
-   Run AFTER 01_create_tables.sql.
-   FK look-ups use subqueries on business keys - no hard-coded IDENTITY values.
+   
+   Reference data supplied (CSVs supplied).
+
+   FK look-ups use subqueries on business keys. No hard-coded IDENTITY values as seen in course.
    ============================================================================ */
 
 USE HDS_ClinicalTrial;
 GO
 
 /* ----------------------------------------------------------------------------
-   ClinicalTrial  (3 trials)
+   ClinicalTrial
    ---------------------------------------------------------------------------- */
 INSERT INTO dbo.ClinicalTrial (registration_number, trial_name, phase, status, start_date, end_date)
 VALUES
@@ -239,7 +235,7 @@ VALUES
 GO
 
 /* ----------------------------------------------------------------------------
-   HospitalSite  (3 sites)
+   HospitalSite 
    ---------------------------------------------------------------------------- */
 INSERT INTO dbo.HospitalSite (site_code, site_name, city, country)
 VALUES
@@ -249,7 +245,7 @@ VALUES
 GO
 
 /* ----------------------------------------------------------------------------
-   Participant  (5 pseudonymised participants)
+   Participant
    ---------------------------------------------------------------------------- */
 INSERT INTO dbo.Participant (study_code, date_of_birth, sex_at_birth, registration_date)
 VALUES
@@ -261,7 +257,7 @@ VALUES
 GO
 
 /* ----------------------------------------------------------------------------
-   InactivationReason  (6 standardised reasons)
+   InactivationReason - inserted with N for NVARCHAR support (Unicode) to allow for any special characters.
    ---------------------------------------------------------------------------- */
 INSERT INTO dbo.InactivationReason (reason_code, reason_description)
 VALUES
@@ -274,8 +270,7 @@ VALUES
 GO
 
 /* ----------------------------------------------------------------------------
-   ConsentVersion  (4 versions across the 3 trials)
-   trial_id is looked up from the registration number.
+   ConsentVersion - trial_id is looked up from the registration number.
    ---------------------------------------------------------------------------- */
 INSERT INTO dbo.ConsentVersion (trial_id, version_number, effective_from, wording_text)
 VALUES
