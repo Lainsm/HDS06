@@ -603,4 +603,66 @@ UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
 
 : File manifest
 
-**Use of generative AI:** *state your declaration here per the coversheet.*
+{{< pagebreak >}}
+
+# Coversheet {.unnumbered}
+
+## MSt Healthcare Data Science --- Authentication of practice {.unnumbered}
+
+| I confirm that I have fully read and understood the assignment brief for this module. | **Y** |
+|:---------------------------------------------------------------------------------|:------|
+
+## Details {.unnumbered}
+
+| | |
+|:--------------------------------------------------------------------|:----------------|
+| Name | Malik J. Lainsbury |
+| Submission Date | 03 -- 07 -- 26 |
+| Word Count: whole assignment including codes | ~2,860 word-equivalents (1,412 prose + 7 queries x 150 + 8 INSERT statements x 50) |
+| Word Count: main body excluding abstract, references and supplementary materials | 1,412 prose words (appendices excluded as supplementary) |
+
+## Permission to share your assignment {.unnumbered}
+
+**I do give permission to share my assignment with future MSt participants.**
+
+## University statement of originality {.unnumbered}
+
+This assignment is the result of my own work and includes nothing which is the
+outcome of work done in collaboration except as declared in the Preface and
+specified in the text. It is not substantially the same as any that I have
+previously submitted for a degree or diploma or other qualification at the
+University of Cambridge or any other university or similar institution, or that
+is being concurrently submitted, except as declared in the Preface and specific
+in the text. I further state that no substantial part of my Portfolio has
+already been submitted, nor is being concurrently submitted for any such
+degree, diploma or other qualification at the University of Cambridge or any
+other university or similar institution except as declared in the Preface and
+specified in the text.
+
+| I confirm the statement of originality as above | **Y** |
+|:------------------------------------------------|:------|
+
+## Questions for reflection {.unnumbered}
+
+**1. Which aspects of this assignment are you most uncertain about and/or would
+most like to receive feedback on?** Whether pointing `Enrollment` at the
+`TrialSite` link table (rather than holding separate trial and site foreign
+keys) is considered good practice or over-normalisation; and whether the
+filtered unique index is an acceptable way to express the "one active trial at
+a time" rule.
+
+**5. Using the wording in the rubric, how would you describe the quality of the
+different aspects of your work?** The ERD, table descriptions and relationships
+aim at the "high performance" descriptors: all entities identified, the
+many-to-many resolved with a link table, and each decision justified against
+the scenario. The script runs end-to-end without errors and every foreign key
+is resolved by subquery on a business key.
+
+## Use of generative artificial intelligence {.unnumbered}
+
+| | |
+|:--------------------------------------------------------|:-------------------------------|
+| Which permitted use of generative AI are you acknowledging? | Review and verification of my own draft work |
+| Which generative AI tool did you use (name and version)? | Claude Code (Anthropic Claude Fable 5) |
+| What did you use the tool for? | Reviewing the draft report and SQL script against the brief; executing the SQL script on Microsoft SQL Server to confirm it runs without errors and that the seven queries return the expected results; checking internal consistency between the report and the script; computing the coversheet word counts. |
+| How have you used or changed the generative AI's output? | The database design, SQL and written prose are my own. Following the AI-assisted review I corrected one inconsistency (aligning the `sex_at_birth` CHECK constraint in the combined script with the data dictionary) and completed the coversheet. |
