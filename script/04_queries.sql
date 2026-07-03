@@ -1,16 +1,10 @@
-/* ============================================================================
-   04_queries.sql
-   The seven clinical / research queries.
-   Run AFTER 03_insert_operational_data.sql.
-   ============================================================================ */
 
 USE HDS_ClinicalTrial;
 GO
 
-/* ----------------------------------------------------------------------------
+/* 
    QUERY 1
-   Current (most recently effective) consent wording for the CARDIOPROTECT trial.
-   ---------------------------------------------------------------------------- */
+   Current (most recently effective) consent wording for the CARDIOPROTECT trial. */
 SELECT TOP (1)
        cv.version_number,
        cv.effective_from,
@@ -21,11 +15,22 @@ WHERE  ct.trial_name LIKE 'CARDIOPROTECT%'
 ORDER  BY cv.effective_from DESC;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 2
-   Monthly status report: each trial, its status, days running, and whether it
-   has an end date or is still ongoing. Active first, then recruiting, then rest.
-   ---------------------------------------------------------------------------- */
+
+
+
+
+
+
+
+
+
+
+USE HDS_ClinicalTrial;
+GO
+
+/* 
+   QUERY 2: Monthly status report: each trial, its status, days running, and whether it
+   has an end date or is still ongoing. Active first, then recruiting, then rest.  */
 SELECT ct.trial_name,
        ct.status,
        DATEDIFF(DAY, ct.start_date, COALESCE(ct.end_date, CAST(GETDATE() AS DATE))) AS days_running,
@@ -39,11 +44,19 @@ ORDER  BY CASE ct.status
           ct.trial_name;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 3
-   Full trial history for participant WBK-003. A LEFT JOIN to InactivationReason
-   keeps active enrolments (which have no reason) in the result set.
-   ---------------------------------------------------------------------------- */
+
+
+
+
+
+
+
+USE HDS_ClinicalTrial;
+GO
+
+/* 
+   QUERY 3: Full trial history for participant WBK-003. A LEFT JOIN to InactivationReason
+   keeps active enrolments (which have no reason) in the result set. */
 SELECT ct.trial_name,
        e.enrolment_date,
        e.inactivation_date,
@@ -57,11 +70,18 @@ WHERE  p.study_code = 'WBK-003'
 ORDER  BY e.enrolment_date;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 4
-   Audit of currently ACTIVE enrolments: participant, trial, site, enrol date.
-   Order by trial name then enrolment date.
-   ---------------------------------------------------------------------------- */
+
+
+
+
+
+
+
+USE HDS_ClinicalTrial;
+GO
+/* 
+   QUERY 4:Audit of currently ACTIVE enrolments: participant, trial, site, enrol date.
+   Order by trial name then enrolment date. */
 SELECT p.study_code,
        ct.trial_name,
        hs.site_name,
@@ -75,12 +95,16 @@ WHERE  e.inactivation_date IS NULL
 ORDER  BY ct.trial_name, e.enrolment_date;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 5
-   Total enrolments ever, per site, INCLUDING sites with none.
+
+
+
+USE HDS_ClinicalTrial;
+GO
+
+/* 
+   QUERY 5: Total enrolments ever, per site, INCLUDING sites with none.
    LEFT JOIN from HospitalSite preserves sites with zero enrolments;
-   COUNT(e.enrollment_id) counts rows, not NULLs, so empty sites score 0.
-   ---------------------------------------------------------------------------- */
+   COUNT(e.enrollment_id) counts rows, not NULLs, so empty sites score 0.*/
 SELECT hs.site_name,
        hs.city,
        COUNT(e.enrollment_id) AS total_enrolments
@@ -91,10 +115,16 @@ GROUP  BY hs.site_name, hs.city
 ORDER  BY total_enrolments DESC;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 6
-   Trials with an amended protocol (more than one consent version issued).
-   ---------------------------------------------------------------------------- */
+
+
+
+
+
+
+USE HDS_ClinicalTrial;
+GO
+/* 
+   QUERY 6: Trials with an amended protocol (more than one consent version issued). */
 SELECT ct.trial_name,
        ct.status,
        COUNT(cv.consent_version_id) AS version_count
@@ -105,11 +135,23 @@ HAVING COUNT(cv.consent_version_id) > 1
 ORDER  BY version_count DESC;
 GO
 
-/* ----------------------------------------------------------------------------
-   QUERY 7
-   Most recently enrolled participant at each site (across all trials).
-   ROW_NUMBER partitioned by site, newest enrolment first; keep rank 1.
-   ---------------------------------------------------------------------------- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+USE HDS_ClinicalTrial;
+GO
+/* QUERY 7: Most recently enrolled participant at each site (across all trials).
+   ROW_NUMBER partitioned by site, newest enrolment first; keep rank 1. */
 WITH RankedEnrolments AS (
     SELECT p.study_code,
            ct.trial_name,

@@ -39,12 +39,12 @@ Server (T-SQL), populates it, and answers seven clinical/research questions. The
 accompanying runnable script is `script/HDS_DB_LAINSBURY_2026.sql`.
 
 ::: callout-note
-**Reproducing the screenshots.** Execute the scripts in order
-(`00 → 01 → 02 → 03 → 05 → 04`) or run the single combined file
-`HDS_DB_LAINSBURY_2026.sql` against the SQL Server connection in VS Code. Each
-query returns one result grid; capture one screenshot per grid and place it in
-the matching slot. The *expected result* listed under each query lets you
-confirm correctness.
+**Reproducing the results.** Execute the scripts in order
+(`00 → 01 → 02 → 03 → 05 → 04 → 06`) or run the single combined file
+`HDS_DB_LAINSBURY_2026.sql`; it runs without errors from start to finish. Each
+query returns one result grid, screenshotted below from the VS Code mssql
+extension connected to SQL Server. The *expected result* listed under each
+query states the output the script reproduces.
 :::
 
 {{< pagebreak >}}
@@ -226,7 +226,9 @@ WHERE  ct.trial_name LIKE 'CARDIOPROTECT%'
 ORDER  BY cv.effective_from DESC;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 1 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query1.png){width=100%}
 
 **Expected result:** version `2`, effective `2024-01-15`, the wearable-devices
 wording.
@@ -252,7 +254,9 @@ ORDER  BY CASE ct.status WHEN 'active' THEN 1 WHEN 'recruiting' THEN 2 ELSE 3 EN
           ct.trial_name;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 2 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query2.png){width=100%}
 
 **Expected result (3 rows):** CARDIOPROTECT (active, Ongoing) first; BREATHE
 (recruiting, Ongoing) second; MOBILISE (completed, Ended, ~1460 days) last.
@@ -280,7 +284,9 @@ WHERE  p.study_code = 'WBK-003'
 ORDER  BY e.enrolment_date;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 3 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query3.png){width=100%}
 
 **Expected result (2 rows):** BREATHE, 2024-06-10, 2024-09-15,
 `consent_withdrawn`; then CARDIOPROTECT, 2024-10-01, NULL, NULL.
@@ -307,7 +313,9 @@ WHERE  e.inactivation_date IS NULL
 ORDER  BY ct.trial_name, e.enrolment_date;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 4 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query4.png){width=100%}
 
 **Expected result (4 rows):** WBK-005 / BREATHE / Westbrook General /
 2024-08-05; WBK-001 / CARDIOPROTECT / Westbrook General / 2023-03-15; WBK-003 /
@@ -334,7 +342,9 @@ GROUP  BY hs.site_name, hs.city
 ORDER  BY total_enrolments DESC;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 5 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query5.png){width=100%}
 
 **Expected result (3 rows):** Westbrook General (London) 4; St Katherine's
 (Manchester) 3; Ridgeway Community (Bristol) 0.
@@ -360,7 +370,9 @@ HAVING COUNT(cv.consent_version_id) > 1
 ORDER  BY version_count DESC;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 6 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query6.png){width=100%}
 
 **Expected result (1 row):** CARDIOPROTECT, active, 2.
 
@@ -391,7 +403,9 @@ WHERE  rn = 1
 ORDER  BY site_name;
 ```
 
-**Screenshot:** *[paste output grid here]*
+**Screenshot.**
+
+![Query 7 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query7.png){width=100%}
 
 **Expected result (2 rows):** WBK-002 / CARDIOPROTECT / St Katherine's Hospital /
 2025-01-10; WBK-003 / CARDIOPROTECT / Westbrook General Hospital / 2024-10-01.
@@ -409,9 +423,11 @@ recent" may need a finer timestamp than a date to be unambiguous.
 
 ## Why no participant names?
 
-Storing only a `study_code` pseudonymises the registry: it minimises the personal
-data held (a GDPR / Caldicott principle) and means a breach of the trial database
-does not directly expose identities. Direct identifiers such as names live in a
+Storing only a `study_code` pseudonymises the registry: it applies the UK GDPR
+data-minimisation principle (Article 5(1)(c)) and the Caldicott Principles of
+justifying every use of confidential information and using the minimum
+necessary, and means a breach of the trial database does not directly expose
+identities. Direct identifiers such as names live in a
 separate, access-controlled master linkage list held by the research office, not
 in the analytical database. In practice this shapes how staff work. Researchers
 query and report entirely on `study_code`, so trial analyses can be shared more
@@ -445,13 +461,13 @@ silent gap. The fix is process plus monitoring, not just a query.
 
 Consent records are the legal and ethical evidence that each participant agreed
 to the specific protocol version in force at the time. They must be append-only
-because consent is a historical fact: editing or deleting a signing event would
-destroy the audit trail that regulators, sponsors and ethics committees rely on
-to prove valid consent existed. If the rule were broken, the database would lose
-referential trust --- a re-consent after a protocol amendment could be silently
-overwritten, a withdrawn consent erased, and it would become impossible to
-demonstrate which wording a participant actually agreed to. The integrity of
-every downstream analysis that assumes valid consent would be undermined.
+because consent is a historical fact: Good Clinical Practice (ICH-GCP) requires
+trial-critical records to carry a complete, tamper-evident audit trail, and
+editing or deleting a signing event would destroy the evidence that regulators,
+sponsors and ethics committees rely on to prove valid consent existed. If the rule were broken, a re-consent after a protocol
+amendment could be silently overwritten or a withdrawn consent erased, making it
+impossible to demonstrate which wording a participant actually agreed to and
+undermining every downstream analysis that assumes valid consent.
 
 I would enforce this at the database level with an **`INSTEAD OF UPDATE, DELETE`
 trigger** on `ConsentSigning` that rejects any such operation with an error,
@@ -469,10 +485,11 @@ END;
 ```
 
 This guarantees the rule regardless of which application or user connects, which
-a permission grant alone would not (an administrator could still bypass column
-permissions). For even stronger, tamper-evident assurance the table could be
-defined as a SQL Server **temporal (system-versioned) table** or audited so that
-any attempted change is itself recorded.
+a permission grant alone would not. For stronger assurance, a SQL Server
+append-only **ledger table** refuses UPDATE/DELETE at the engine level and
+chains rows into a cryptographically verifiable hash tree, so even an
+administrator cannot tamper with a consent record undetectably --- stronger than
+the trigger, which a sufficiently privileged account could disable.
 
 {{< pagebreak >}}
 
@@ -481,6 +498,28 @@ any attempted change is itself recorded.
 A complete column-level reference for every table, derived from
 `script/01_create_tables.sql`. *Key:* PK = primary key, FK = foreign key,
 UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
+
+This dictionary is not static documentation: `script/06_metadata.sql` stores
+every table description --- and the column descriptions where meaning is not
+self-evident, in particular the meaningful-NULL columns --- **in the database
+catalog itself** as `MS_Description` extended properties. The dictionary can
+therefore be regenerated at any time (or consumed by data-catalogue tooling) by
+querying the system views, so the metadata travels with the schema rather than
+living in a document that can drift out of date:
+
+```sql
+SELECT t.name                                        AS table_name,
+       c.name                                        AS column_name,
+       TYPE_NAME(c.user_type_id)                     AS data_type,
+       IIF(c.is_nullable = 1, 'NULL', 'NOT NULL')    AS nullability,
+       CAST(ep.value AS NVARCHAR(400))               AS column_description
+FROM   sys.tables  t
+JOIN   sys.columns c ON c.object_id = t.object_id
+LEFT   JOIN sys.extended_properties ep
+       ON  ep.major_id = c.object_id AND ep.minor_id = c.column_id
+       AND ep.class = 1 AND ep.name = 'MS_Description'
+ORDER  BY t.name, c.column_id;
+```
 
 ```{=latex}
 \footnotesize
@@ -599,9 +638,31 @@ UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
 | `script/03_insert_operational_data.sql` | TrialSite, Enrollment, ConsentSigning data |
 | `script/04_queries.sql` | The seven queries |
 | `script/05_append_only_trigger.sql` | Append-only enforcement for `ConsentSigning` |
+| `script/06_metadata.sql` | Extended-property metadata + catalog-driven data dictionary |
 | `script/HDS_DB_LAINSBURY_2026.sql` | **Submission file** --- everything in run order |
 
 : File manifest
+
+{{< pagebreak >}}
+
+# Appendix C --- Interoperability mapping (HL7 FHIR) {.unnumbered}
+
+The registry does not exist in isolation: if the trust later needs to exchange
+trial data with other NHS organisations, sponsors, or national research
+platforms, the natural target is the HL7 FHIR standard used across the NHS.
+The schema maps cleanly onto FHIR resources, which validates the entity
+choices and gives a ready-made route for future data linkage beyond the trust:
+
+| Registry table | FHIR resource | Notes |
+|:---------------|:--------------|:--------------------------------------------|
+| `ClinicalTrial` | `ResearchStudy` | Phase and status map to the resource's `phase` and `status` elements. |
+| `Participant` | `Patient` (pseudonymised) | `study_code` becomes a pseudonymous `identifier`; no name elements populated. |
+| `Enrollment` | `ResearchSubject` | FHIR likewise links one patient to one study with period and status. |
+| `HospitalSite` | `Location` / `Organization` | Site code as the `identifier`. |
+| `ConsentSigning` + `ConsentVersion` | `Consent` | FHIR `Consent` also references the specific policy/form version agreed to. |
+| `InactivationReason` | `ResearchSubject` progress reason (coded) | The controlled vocabulary would be published as a FHIR `CodeSystem`. |
+
+: Mapping of registry tables to HL7 FHIR resources {tbl-colwidths="[22,26,52]"}
 
 {{< pagebreak >}}
 
@@ -618,8 +679,8 @@ UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
 |:--------------------------------------------------------------------|:----------------|
 | Name | Malik J. Lainsbury |
 | Submission Date | 03 -- 07 -- 26 |
-| Word Count: whole assignment including codes | ~2,860 word-equivalents (1,412 prose + 7 queries x 150 + 8 INSERT statements x 50) |
-| Word Count: main body excluding abstract, references and supplementary materials | 1,412 prose words (appendices excluded as supplementary) |
+| Word Count: whole assignment including codes | ~2,900 word-equivalents (1,447 prose + 7 queries x 150 + 8 INSERT statements x 50) |
+| Word Count: main body excluding abstract, references and supplementary materials | 1,447 prose words (appendices excluded as supplementary) |
 
 ## Permission to share your assignment {.unnumbered}
 
