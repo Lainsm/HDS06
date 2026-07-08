@@ -2,22 +2,32 @@
    - HDS_DB_LAINSBURY_2026.sql
    - Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry
    - Microsoft SQL Server (T-SQL)
-   - Ran on Linux (Ubuntu 26.04)without error in VS Code using mssql extension.
+   - Ran on Linux (Ubuntu 26.04) without error in VS Code using mssql extension.
    ============================================================================ */
 
 
-/* ###################### 00_create_database.sql ###################### */
+/* ###################### Create Database  ###################### */
 
 /* ============================================================================
-   00_create_database.sql
-   Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry
+   First script to run. Creates the database.
    
-   - Script to create the database & tables. Used an IF to allow you to run this script\ 
-   even if you already created the DB from previous classmate assignments.
+   I used an IF to allow you to run this script even if you already created 
+   a DB with same name from previous classmate assignments.
    ============================================================================ */
+
+USE master;
+GO
 
 IF DB_ID('HDS_ClinicalTrial') IS NOT NULL
 BEGIN
+    -- Kill any other sessions (e.g. IntelliSense) still attached, so the
+    -- single-user slot isn't reclaimed before the DROP statement runs.
+    DECLARE @kill NVARCHAR(MAX) = N'';
+    SELECT @kill += N'KILL ' + CONVERT(NVARCHAR(5), session_id) + N';'
+    FROM sys.dm_exec_sessions
+    WHERE database_id = DB_ID('HDS_ClinicalTrial') AND session_id <> @@SPID;
+    EXEC sp_executesql @kill;
+
     ALTER DATABASE HDS_ClinicalTrial SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
     DROP DATABASE HDS_ClinicalTrial;
 END
@@ -30,7 +40,7 @@ USE HDS_ClinicalTrial;
 GO
 
 
-/* ###################### 01_create_tables.sql ###################### */
+/* ###################### Create tables ###################### */
 
 /* ============================================================================
 
@@ -46,7 +56,11 @@ GO
    ConsentSigning: append-only record of every consent signing event
 
    Every table has a surrogate INT IDENTITY primary key plus one or more
-   business (natural) UNIQUE keys (as per recommendation in the brief).
+   business (natural) UNIQUE keys (as per recommendation in the brief),
+   EXCEPT TrialSite, which uses a composite natural primary key
+   (trial_id, site_id) instead of a surrogate - the pairing itself is
+   the identity of that row, so a separate IDENTITY column would be
+   redundant with no other column.
    ============================================================================ */
 
 USE HDS_ClinicalTrial; 
@@ -76,7 +90,7 @@ CREATE TABLE dbo.ClinicalTrial (
     end_date            DATE                NULL,        -- NULL as we can have ongoing trials
     CONSTRAINT PK_ClinicalTrial        PRIMARY KEY (trial_id),
     CONSTRAINT UQ_ClinicalTrial_reg    UNIQUE (registration_number),
-    CONSTRAINT CK_ClinicalTrial_phase  CHECK (phase IN ('I','II','III','IV')),
+    CONSTRAINT CK_ClinicalTrial_phase  CHECK (phase IN ('I','II','III','IV')), -- using "phase" for controlled vocabulary for trial phases
     CONSTRAINT CK_ClinicalTrial_status CHECK (status IN ('recruiting','active','completed','suspended')),
     CONSTRAINT CK_ClinicalTrial_dates  CHECK (end_date IS NULL OR end_date >= start_date)
 );
@@ -107,7 +121,7 @@ CREATE TABLE dbo.Participant (
     registration_date DATE              NOT NULL,
     CONSTRAINT PK_Participant        PRIMARY KEY (participant_id),
     CONSTRAINT UQ_Participant_code   UNIQUE (study_code),
-    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female','Intersex','Unknown')), -- controlled vocabulary for sex at birth (not gender); 'Intersex'/'Unknown' cover real registry cases
+    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female')), -- controlled vocabulary for sex at birth (not gender); 'Intersex'/'Unknown' cover real registry cases
     CONSTRAINT CK_Participant_dob    CHECK (date_of_birth < registration_date)
 );
 GO
@@ -126,15 +140,18 @@ GO
 
 /* ----------------------------------------------------------------------------
    TrialSite  (link table: which sites run which trials, M:N)
+   Composite primary key (trial_id, site_id) - no surrogate ID column;
+   Enrollment below carries a composite FK to this pair directly.
    ---------------------------------------------------------------------------- */
 CREATE TABLE dbo.TrialSite (
-    trial_site_id INT IDENTITY(1,1) NOT NULL,
     trial_id      INT               NOT NULL,
     site_id       INT               NOT NULL,
     opened_date   DATE              NOT NULL,   -- site opened for recruitment
     closed_date   DATE              NULL,        -- NULL = still open
-    CONSTRAINT PK_TrialSite        PRIMARY KEY (trial_site_id),
-    CONSTRAINT UQ_TrialSite        UNIQUE (trial_id, site_id),
+    /* Composite natural key: the (trial, site) pairing IS the identity of this
+       row - there is nothing else to surrogate-key against, so no separate
+       IDENTITY column is used here (unlike the rest of the schema). */
+    CONSTRAINT PK_TrialSite        PRIMARY KEY (trial_id, site_id),
     CONSTRAINT FK_TrialSite_trial  FOREIGN KEY (trial_id) REFERENCES dbo.ClinicalTrial(trial_id),
     CONSTRAINT FK_TrialSite_site   FOREIGN KEY (site_id)  REFERENCES dbo.HospitalSite(site_id),
     CONSTRAINT CK_TrialSite_dates  CHECK (closed_date IS NULL OR closed_date >= opened_date)
@@ -159,26 +176,26 @@ GO
 
 /* ----------------------------------------------------------------------------
    Enrollment  (a participant enrolled in a trial at a specific site)
-   The enrolment points at a TrialSite row, so the trial AND the site are
-   captured together and an enrolment can only reference a site that actually
-   runs the trial. The original enrolment row is preserved; leaving the trial
-   only sets inactivation_date / inactivation_reason_id.
+   The enrolment carries (trial_id, site_id) as a composite FK to TrialSite,
+   so the trial AND the site are captured together and an enrolment can only
+   reference a site that actually runs the trial. The original enrolment row
+   is preserved; leaving the trial only sets inactivation_date /
+   inactivation_reason_id.
    ---------------------------------------------------------------------------- */
 CREATE TABLE dbo.Enrollment (
     enrollment_id         INT IDENTITY(1,1) NOT NULL,
     participant_id        INT               NOT NULL,
-    trial_site_id         INT               NOT NULL,
+    trial_id               INT              NOT NULL,
+    site_id                 INT             NOT NULL,
     enrolment_date        DATE              NOT NULL,
     inactivation_date     DATE              NULL,   -- NULL = still active
     inactivation_reason_id INT              NULL,   -- NULL = still active
     CONSTRAINT PK_Enrollment             PRIMARY KEY (enrollment_id),
     CONSTRAINT FK_Enrollment_participant FOREIGN KEY (participant_id)         REFERENCES dbo.Participant(participant_id),
-    CONSTRAINT FK_Enrollment_trialsite   FOREIGN KEY (trial_site_id)          REFERENCES dbo.TrialSite(trial_site_id),
+    CONSTRAINT FK_Enrollment_trialsite   FOREIGN KEY (trial_id, site_id)      REFERENCES dbo.TrialSite(trial_id, site_id),
     CONSTRAINT FK_Enrollment_reason      FOREIGN KEY (inactivation_reason_id) REFERENCES dbo.InactivationReason(reason_id),
-    /* A participant cannot be enrolled in the same trial-site twice. */
-    CONSTRAINT UQ_Enrollment             UNIQUE (participant_id, trial_site_id),
-    /* Inactivation date and reason must both be present or both absent. */
-    CONSTRAINT CK_Enrollment_inactivation CHECK (
+    CONSTRAINT UQ_Enrollment             UNIQUE (participant_id, trial_id, site_id), --A participant cannot be enrolled in the same trial-site twice
+    CONSTRAINT CK_Enrollment_inactivation CHECK ( --Inactivation date and reason must both be present or both absent
         (inactivation_date IS NULL     AND inactivation_reason_id IS NULL)
      OR (inactivation_date IS NOT NULL AND inactivation_reason_id IS NOT NULL)),
     CONSTRAINT CK_Enrollment_dates CHECK (inactivation_date IS NULL OR inactivation_date >= enrolment_date)
@@ -212,11 +229,11 @@ CREATE TABLE dbo.ConsentSigning (
 GO
 
 
-/* ###################### 02_insert_reference_data.sql ###################### */
+/* ###################### Insert DATA ###################### */
 
 /* ============================================================================
-   
-   Reference data supplied (CSVs supplied).
+
+   Using both the reference data supplied (CSVs supplied) and additional data as per brief.
 
    FK look-ups use subqueries on business keys. No hard-coded IDENTITY values as seen in course.
    ============================================================================ */
@@ -292,16 +309,14 @@ VALUES
 GO
 
 
-/* ###################### 03_insert_operational_data.sql ###################### */
+/* ###################### insert additional data ###################### */
 
-/* ============================================================================
-   03_insert_operational_data.sql
-   Operational data added by the designer to make the seven queries meaningful:
+/* 
+   Operational data added to make the seven queries meaningful:
      - TrialSite      : which sites run which trials (and when they opened/closed)
      - Enrollment     : participants enrolled in trials at sites, incl. history
      - ConsentSigning : append-only consent signing events (incl. re-consent)
-   Run AFTER 02_insert_reference_data.sql.
-   All FK look-ups use subqueries on business keys.
+
    ============================================================================ */
 
 USE HDS_ClinicalTrial;
@@ -327,81 +342,63 @@ VALUES
   (SELECT site_id  FROM dbo.HospitalSite  WHERE site_code='STK-NOR'), '2021-01-01', '2024-12-31');
 GO
 
-/* ----------------------------------------------------------------------------
-   Helper pattern for enrolments
-   The trial_site_id is resolved from (registration_number, site_code) so we
-   never hard-code IDENTITY values.
-   ---------------------------------------------------------------------------- */
+
 
 /* WBK-001 : active in CARDIOPROTECT at Westbrook General (re-consents later) */
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-001'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN10234567' AND hs.site_code='WBK-GEN'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-001'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'),
   '2023-03-15', NULL, NULL);
 
 /* WBK-002 : completed MOBILISE (past), now active in CARDIOPROTECT at St Katherine's */
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-002'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN30456789' AND hs.site_code='STK-NOR'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-002'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN30456789'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='STK-NOR'),
   '2021-02-01', '2024-12-31',
   (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='trial_completed'));
 
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-002'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN10234567' AND hs.site_code='STK-NOR'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-002'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='STK-NOR'),
   '2025-01-10', NULL, NULL);
 
 /* WBK-003 : withdrew from BREATHE (past), now active in CARDIOPROTECT - needed for Query 3 */
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-003'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN20345678' AND hs.site_code='WBK-GEN'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-003'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'),
   '2024-06-10', '2024-09-15',
   (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='consent_withdrawn'));
 
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-003'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN10234567' AND hs.site_code='WBK-GEN'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-003'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'),
   '2024-10-01', NULL, NULL);
 
 /* WBK-004 : died during CARDIOPROTECT at St Katherine's (inactive) */
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-004'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN10234567' AND hs.site_code='STK-NOR'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-004'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='STK-NOR'),
   '2023-05-20', '2023-11-10',
   (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='death'));
 
 /* WBK-005 : active in BREATHE at Westbrook General */
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
- ((SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-005'),
-  (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-     JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-     WHERE ct.registration_number='ISRCTN20345678' AND hs.site_code='WBK-GEN'),
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-005'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'),
   '2024-08-05', NULL, NULL);
 GO
 
@@ -417,8 +414,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-001' AND ct.registration_number='ISRCTN10234567'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -430,8 +426,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-001' AND ct.registration_number='ISRCTN10234567'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -443,8 +438,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-002' AND ct.registration_number='ISRCTN30456789'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -456,8 +450,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-002' AND ct.registration_number='ISRCTN10234567'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -469,8 +462,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-003' AND ct.registration_number='ISRCTN20345678'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -482,8 +474,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-003' AND ct.registration_number='ISRCTN10234567'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -495,8 +486,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-004' AND ct.registration_number='ISRCTN10234567'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -508,13 +498,70 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
      JOIN dbo.Participant p ON p.participant_id = e.participant_id
-     JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-     JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
      WHERE p.study_code='WBK-005' AND ct.registration_number='ISRCTN20345678'),
   (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
      JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
      WHERE ct.registration_number='ISRCTN20345678' AND cv.version_number=1),
   '2024-08-05', N'Nurse S. Patel');
+GO
+
+
+/* WBK-002 : close out the active CARDIOPROTECT enrolment (in place) */
+UPDATE dbo.Enrollment
+SET    inactivation_date      = '2025-02-15',
+       inactivation_reason_id = (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='eligibility_lost')
+WHERE  participant_id = (SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-002')
+  AND  trial_id       = (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567')
+  AND  site_id        = (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='STK-NOR');
+
+/* WBK-002 : new active enrolment - BREATHE at Reading Community */
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+VALUES
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-002'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='RDG-COM'),
+  '2025-03-01', NULL, NULL);
+
+/* WBK-002 - BREATHE v1 at Reading Community */
+INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, witnessed_by)
+VALUES
+ ((SELECT e.enrollment_id FROM dbo.Enrollment e
+     JOIN dbo.Participant p ON p.participant_id = e.participant_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
+     WHERE p.study_code='WBK-002' AND ct.registration_number='ISRCTN20345678'),
+  (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
+     WHERE ct.registration_number='ISRCTN20345678' AND cv.version_number=1),
+  '2025-03-01', N'Nurse S. Patel');
+
+/* WBK-005 : close out the active BREATHE enrolment (in place) */
+UPDATE dbo.Enrollment
+SET    inactivation_date      = '2025-03-15',
+       inactivation_reason_id = (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='clinician_decision')
+WHERE  participant_id = (SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-005')
+  AND  trial_id       = (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678')
+  AND  site_id        = (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN');
+
+/* WBK-005 : new active enrolment - CARDIOPROTECT at St Katherine's (most recent overall) */
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+VALUES
+ ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-005'),
+  (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+  (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='STK-NOR'),
+  '2025-04-01', NULL, NULL);
+
+/* WBK-005 - CARDIOPROTECT v2 at St Katherine's (current version) */
+INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, witnessed_by)
+VALUES
+ ((SELECT e.enrollment_id FROM dbo.Enrollment e
+     JOIN dbo.Participant p ON p.participant_id = e.participant_id
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
+     WHERE p.study_code='WBK-005' AND ct.registration_number='ISRCTN10234567'),
+  (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
+     JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
+     WHERE ct.registration_number='ISRCTN10234567' AND cv.version_number=2),
+  '2025-04-01', N'Nurse A. Okafor');
 GO
 
 
@@ -544,6 +591,7 @@ GO
 
 /* ---- Optional verification (these two statements SHOULD fail with error 51000):
 
+
    UPDATE dbo.ConsentSigning SET witnessed_by = N'Someone Else'
    WHERE  consent_signing_id = 1;
 
@@ -551,13 +599,11 @@ GO
    WHERE  consent_signing_id = 1;
 ---- */
 
-
-/* ###################### 04_queries.sql ###################### */
+/* ###################### Queries  ###################### */
 
 /* ============================================================================
-   04_queries.sql
    The seven clinical / research queries.
-   Run AFTER 03_insert_operational_data.sql.
+   Can only be ran AFTER inserting operational data.
    ============================================================================ */
 
 USE HDS_ClinicalTrial;
@@ -599,6 +645,8 @@ GO
    QUERY 3
    Full trial history for participant WBK-003. A LEFT JOIN to InactivationReason
    keeps active enrolments (which have no reason) in the result set.
+   Enrollment stores trial_id directly (composite FK to TrialSite), so
+   ClinicalTrial can be joined straight off it - no TrialSite join needed.
    ---------------------------------------------------------------------------- */
 SELECT ct.trial_name,
        e.enrolment_date,
@@ -606,8 +654,7 @@ SELECT ct.trial_name,
        ir.reason_code
 FROM   dbo.Enrollment       e
 JOIN   dbo.Participant      p  ON p.participant_id = e.participant_id
-JOIN   dbo.TrialSite        ts ON ts.trial_site_id = e.trial_site_id
-JOIN   dbo.ClinicalTrial    ct ON ct.trial_id      = ts.trial_id
+JOIN   dbo.ClinicalTrial    ct ON ct.trial_id      = e.trial_id
 LEFT   JOIN dbo.InactivationReason ir ON ir.reason_id = e.inactivation_reason_id
 WHERE  p.study_code = 'WBK-003'
 ORDER  BY e.enrolment_date;
@@ -617,6 +664,8 @@ GO
    QUERY 4
    Audit of currently ACTIVE enrolments: participant, trial, site, enrol date.
    Order by trial name then enrolment date.
+   Enrollment stores trial_id and site_id directly, so ClinicalTrial and
+   HospitalSite are joined straight off it - no TrialSite join needed.
    ---------------------------------------------------------------------------- */
 SELECT p.study_code,
        ct.trial_name,
@@ -624,9 +673,8 @@ SELECT p.study_code,
        e.enrolment_date
 FROM   dbo.Enrollment    e
 JOIN   dbo.Participant   p  ON p.participant_id = e.participant_id
-JOIN   dbo.TrialSite     ts ON ts.trial_site_id = e.trial_site_id
-JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = ts.trial_id
-JOIN   dbo.HospitalSite  hs ON hs.site_id        = ts.site_id
+JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = e.trial_id
+JOIN   dbo.HospitalSite  hs ON hs.site_id       = e.site_id
 WHERE  e.inactivation_date IS NULL
 ORDER  BY ct.trial_name, e.enrolment_date;
 GO
@@ -636,13 +684,14 @@ GO
    Total enrolments ever, per site, INCLUDING sites with none.
    LEFT JOIN from HospitalSite preserves sites with zero enrolments;
    COUNT(e.enrollment_id) counts rows, not NULLs, so empty sites score 0.
+   Enrollment stores site_id directly, so it is joined straight off
+   HospitalSite - no TrialSite join needed.
    ---------------------------------------------------------------------------- */
 SELECT hs.site_name,
        hs.city,
        COUNT(e.enrollment_id) AS total_enrolments
 FROM   dbo.HospitalSite hs
-LEFT   JOIN dbo.TrialSite  ts ON ts.site_id        = hs.site_id
-LEFT   JOIN dbo.Enrollment e  ON e.trial_site_id   = ts.trial_site_id
+LEFT   JOIN dbo.Enrollment e ON e.site_id = hs.site_id
 GROUP  BY hs.site_name, hs.city
 ORDER  BY total_enrolments DESC;
 GO
@@ -665,6 +714,8 @@ GO
    QUERY 7
    Most recently enrolled participant at each site (across all trials).
    ROW_NUMBER partitioned by site, newest enrolment first; keep rank 1.
+   Enrollment stores trial_id and site_id directly, so ClinicalTrial and
+   HospitalSite are joined straight off it - no TrialSite join needed.
    ---------------------------------------------------------------------------- */
 WITH RankedEnrolments AS (
     SELECT p.study_code,
@@ -675,9 +726,8 @@ WITH RankedEnrolments AS (
                               ORDER BY e.enrolment_date DESC, e.enrollment_id DESC) AS rn
     FROM   dbo.Enrollment    e
     JOIN   dbo.Participant   p  ON p.participant_id = e.participant_id
-    JOIN   dbo.TrialSite     ts ON ts.trial_site_id = e.trial_site_id
-    JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = ts.trial_id
-    JOIN   dbo.HospitalSite  hs ON hs.site_id        = ts.site_id
+    JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = e.trial_id
+    JOIN   dbo.HospitalSite  hs ON hs.site_id       = e.site_id
 )
 SELECT study_code,
        trial_name,

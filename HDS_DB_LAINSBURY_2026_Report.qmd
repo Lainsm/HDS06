@@ -719,6 +719,81 @@ many-to-many resolved with a link table, and each decision justified against
 the scenario. The script runs end-to-end without errors and every foreign key
 is resolved by subquery on a business key.
 
+{{< pagebreak >}}
+
+# Appendix B: Additional Operational Data {.unnumbered}
+
+## Overview
+
+Assignment section 6.1 specifies: "In addition to the reference data provided, you must also add **your own data** to all the other records you have designed and there should be **enough data of your own to answer all seven queries meaningfully**."
+
+The reference data provided (ClinicalTrial, HospitalSite, InactivationReason, Participant, ConsentVersion) contains no `TrialSite`, `Enrollment`, or `ConsentSigning` rows at all --- those three tables are entirely self-authored operational data. Beyond the minimum needed to satisfy the six worked-example requirements, two further **trial transitions** were added to enrich Queries 4, 5 and 7. `TrialSite` also uses a composite primary key `(trial_id, site_id)` rather than a surrogate IDENTITY (see Table Descriptions, main body); as a result `Enrollment` stores `trial_id` and `site_id` directly rather than a single `trial_site_id` pointer.
+
+## Why a transition, not a second simultaneous enrolment
+
+The schema enforces the brief's rule that a participant may be actively enrolled in only one trial at a time with a filtered unique index:
+
+```sql
+CREATE UNIQUE INDEX UX_Enrollment_OneActivePerParticipant
+    ON dbo.Enrollment(participant_id)
+    WHERE inactivation_date IS NULL;
+```
+
+This permits at most one row per participant with `inactivation_date IS NULL`. Consequently, the two additions below each **close** the participant's existing active enrolment first (an `UPDATE` in place, preserving the original row as the brief requires), then **insert** a new active enrolment --- exactly the "left a previous trial and later joined a new one" pattern the scenario itself describes.
+
+## Additional Trial Transitions Added
+
+### 1. WBK-002: CARDIOPROTECT (St Katherine's) closed, BREATHE (Reading Community) opened
+
+**Data added:**
+- `UPDATE`: WBK-002's active CARDIOPROTECT enrolment at St Katherine's is closed --- `inactivation_date = 2025-02-15`, `inactivation_reason_id` = `eligibility_lost`
+- `INSERT`: new active enrolment --- BREATHE at Reading Community, `enrolment_date = 2025-03-01`
+- `INSERT`: consent signing --- BREATHE v1, signed 2025-03-01, witnessed by Nurse S. Patel
+- **Significance**: this is the first and only enrolment ever recorded at Reading Community, activating a previously empty site
+
+**Impact on queries:**
+- **Query 5**: Reading Community moves from 0 to 1 total enrolment --- all three sites now appear with a non-zero count, demonstrating the `LEFT JOIN` correctly includes a site the moment it gains its first enrolment
+- **Query 4**: WBK-002 still appears (now under BREATHE/Reading Community instead of CARDIOPROTECT/St Katherine's) --- the active count is unchanged, but site/trial diversity increases
+- **Query 7**: Reading Community now has a candidate row, so all three sites are represented in the "most recent per site" result
+
+### 2. WBK-005: BREATHE (Westbrook General) closed, CARDIOPROTECT (St Katherine's) opened
+
+**Data added:**
+- `UPDATE`: WBK-005's active BREATHE enrolment at Westbrook General is closed --- `inactivation_date = 2025-03-15`, `inactivation_reason_id` = `clinician_decision`
+- `INSERT`: new active enrolment --- CARDIOPROTECT at St Katherine's, `enrolment_date = 2025-04-01` (the most recent enrolment date in the whole database)
+- `INSERT`: consent signing --- CARDIOPROTECT v2 (the current version), signed 2025-04-01, witnessed by Nurse A. Okafor
+
+**Impact on queries:**
+- **Query 7**: gives St Katherine's a genuine choice between two dated candidates (WBK-002's original 2025-01-10 enrolment and WBK-005's 2025-04-01 enrolment), so the `ROW_NUMBER() OVER (PARTITION BY site ...)` logic is doing real selection work rather than returning a trivial single-row partition
+- **Query 4**: WBK-005 still appears (now under CARDIOPROTECT/St Katherine's instead of BREATHE/Westbrook General)
+
+## Data Coverage Summary
+
+| Metric | Before additions | After additions |
+|:--------|:--------:|:--------:|
+| Enrollment rows | 7 | 9 |
+| Active enrolments | 4 | 4 (unchanged --- each transition closes one, opens one) |
+| Hospital sites with $\geq$1 enrolment ever | 2 | 3 (Reading Community now included) |
+| Consent signing events | 8 | 10 |
+| Trials each active participant has moved between | 0 | 2 participants (WBK-002, WBK-005) demonstrate the "left one trial, joined another" pattern |
+
+## Query 4, 5 and 7 results after the additions
+
+**Query 4 (active enrolments, 4 rows):** WBK-002 / BREATHE / Reading Community / 2025-03-01; WBK-001 / CARDIOPROTECT / Westbrook General / 2023-03-15; WBK-003 / CARDIOPROTECT / Westbrook General / 2024-10-01; WBK-005 / CARDIOPROTECT / St Katherine's / 2025-04-01.
+
+**Query 5 (enrolments per site, 3 rows):** Westbrook General 4; St Katherine's 4; Reading Community 1.
+
+**Query 7 (most recent per site, 3 rows):** Reading Community --- WBK-002 / BREATHE / 2025-03-01; St Katherine's --- WBK-005 / CARDIOPROTECT / 2025-04-01; Westbrook General --- WBK-003 / CARDIOPROTECT / 2024-10-01.
+
+## Submission Compliance Checklist
+
+- ✅ **Additional data added**: 2 trial transitions (2 `UPDATE` + 2 `INSERT` on `Enrollment`, 2 `INSERT` on `ConsentSigning`), on top of the 7 enrolments / 8 signings from the worked-example minimum
+- ✅ **One-active-enrolment-per-participant rule respected**: each transition closes the existing active row before opening the new one, satisfying `UX_Enrollment_OneActivePerParticipant`
+- ✅ **Subquery pattern maintained**: all FK lookups (including the `UPDATE` `WHERE` clauses) use subqueries on business keys (`registration_number`, `site_code`, `study_code`), never hardcoded IDs
+- ✅ **Append-only pattern**: `ConsentSigning` records are immutable; consent history is preserved
+- ✅ **Original enrolment rows preserved**: closing an enrolment updates `inactivation_date`/`inactivation_reason_id` in place; no row is ever deleted
+- ✅ **Meaningful query support**: Queries 4, 5 and 7 all return richer, non-trivial results without artificial filtering
+
 ## Use of generative artificial intelligence {.unnumbered}
 
 | | |
