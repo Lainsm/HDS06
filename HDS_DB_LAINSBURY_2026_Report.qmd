@@ -15,9 +15,11 @@ format:
     linestretch: 1.15
     toc: true
     toc-depth: 2
-    number-sections: true
+    number-sections: false
     colorlinks: true
     syntax-highlighting: dracula
+    linkcolor: blue
+    link-bibliography: true
     fig-pos: "H"
     include-in-header:
       text: |
