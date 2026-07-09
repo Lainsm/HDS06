@@ -121,7 +121,7 @@ CREATE TABLE dbo.Participant (
     registration_date DATE              NOT NULL,
     CONSTRAINT PK_Participant        PRIMARY KEY (participant_id),
     CONSTRAINT UQ_Participant_code   UNIQUE (study_code),
-    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female')), -- controlled vocabulary for sex at birth (not gender); 'Intersex'/'Unknown' cover real registry cases
+    CONSTRAINT CK_Participant_sex    CHECK (sex_at_birth IN ('Male','Female')), -- biological sex at birth, not gender identity; only two values are recorded for this field
     CONSTRAINT CK_Participant_dob    CHECK (date_of_birth < registration_date)
 );
 GO
