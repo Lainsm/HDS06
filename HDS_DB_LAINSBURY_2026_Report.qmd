@@ -3,6 +3,8 @@ title: "HDS06 - Designing and Querying a Clinical Trial Participant Registry"
 subtitle: "Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry"
 author: "Malik J. Lainsbury | [github](https://github.com/Lainsm/HDS06)"
 date: today
+bibliography: biblio.bib
+csl: american-medical-association.csl
 format:
   pdf:
     documentclass: report
@@ -39,11 +41,11 @@ Server (T-SQL), populates it and answers seven fictional clinical questions. The
 accompanying runnable script is `script/HDS_DB_LAINSBURY_2026.sql`.
 
 ::: callout-note
-**Reproducing the results.** Execute the scripts in order
-(`00 → 01 → 02 → 03 → 05 → 04 → 06`) or run the single combined file
-`HDS_DB_LAINSBURY_2026.sql`; it runs without errors from start to finish. Each
-query returns one result grid, screenshotted below from the VS Code mssql
-extension connected to SQL Server.
+**Reproducing the results.** Run `script/HDS_DB_LAINSBURY_2026.sql`. It the requested
+single self-contained script that creates the database, tables, data, trigger
+and queries in order. It ran on my instance without errors from start to finish. Each
+query returns one result grid that are screenshotted below. I used the VS Code mssql
+extension connected to a local SQL Server.
 :::
 
 {{< pagebreak >}}
@@ -52,61 +54,63 @@ extension connected to SQL Server.
 
 ## Entity Relationship Diagram
 
-The schema has eight tables. `TrialSite` resolves the many-to-many relationship
-between trials and sites; `Enrollment` records a participant's participation in a
-trial at a site; `ConsentSigning` is the append-only log of consent events
-(@fig-erd).
+The DB schema has eight tables. `TrialSite` is necessary addition that resolves the many-to-many relationship between trials and sites. `Enrollment` records a participant's participation in a
+trial at a site. `ConsentSigning` is the append-only log of consent events to ensure a complete audit trail. The ERD is shown in crow's-foot notation in @fig-erd.
 
 ![Entity Relationship Diagram (crow's-foot notation).](erd.png){#fig-erd width=100%}
 
 ## Table Descriptions
 
-Every table uses a surrogate `INT IDENTITY` primary key for stable internal
-joins, plus one or more **business (natural) UNIQUE keys** for the values
+Every table uses a surrogate `INT IDENTITY` primary key for internal
+joins, plus one or more **business UNIQUE keys** for the values
 clinical staff actually recognise.
 
 | Table | Purpose and key design choices |
 |:------|:-------------------------------------------------------------------------------|
 | **ClinicalTrial** | One row per trial. PK `trial_id` (IDENTITY). UNIQUE `registration_number` --- the ISRCTN number is the externally recognised, never-reused identifier, so it is the natural key. `CHECK` on `phase` (I/II/III/IV) and `status` enforce the controlled vocabularies; `CHECK (end_date >= start_date)` prevents impossible ranges. |
 | **HospitalSite** | One row per site. PK `site_id`. UNIQUE `site_code` --- short codes (e.g. `WBK-GEN`) are how sites are referred to operationally, so they form the natural key. |
-| **Participant** | One pseudonymised participant per row; **no names held**. PK `participant_id`. UNIQUE `study_code` --- the pseudonym is the only safe external identifier. `CHECK` on `sex_at_birth`; `CHECK (date_of_birth < registration_date)`. |
+| **Participant** | One pseudonymised participant per row; **no names held**. PK `participant_id`. UNIQUE `study_code` --- the pseudonym is the only safe external identifier. `CHECK` on `sex_at_birth` (biological sex at birth, not gender identity --- only two values are recorded); `CHECK (date_of_birth < registration_date)`. |
 | **InactivationReason** | Controlled vocabulary of reasons a participant leaves a trial, so exits report consistently across trials. PK `reason_id`. UNIQUE `reason_code` --- the stable report token. |
-| **TrialSite** | **Link table** resolving the trial--site many-to-many; also records when each site opened/closed for recruitment on that trial. PK `trial_site_id`. `UNIQUE (trial_id, site_id)` is the real business key; FKs to ClinicalTrial and HospitalSite; `CHECK (closed_date >= opened_date)`. |
+| **TrialSite** | **Link table** resolving the trial--site many-to-many; also records when each site opened/closed for recruitment on that trial. Composite PK `(trial_id, site_id)` --- the pairing itself is the row's identity, so no surrogate IDENTITY column is used here (unlike every other table); FKs to ClinicalTrial and HospitalSite; `CHECK (closed_date >= opened_date)`. |
 | **ConsentVersion** | Every approved version of a trial's consent form, including wording and effective date; old versions never overwritten. PK `consent_version_id`. `UNIQUE (trial_id, version_number)`; FK to ClinicalTrial; `wording_text` is `NVARCHAR(MAX)`. |
-| **Enrollment** | A participant enrolled in a trial at a specific site. Points at a `TrialSite` row so trial **and** site are captured together and a participant can only enrol where the trial runs. Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite, InactivationReason; `UNIQUE (participant_id, trial_site_id)`; paired-null `CHECK`; filtered unique index for "one active trial at a time". |
+| **Enrollment** | A participant enrolled in a trial at a specific site. Carries `(trial_id, site_id)` as a composite FK straight to `TrialSite`, so trial **and** site are captured together and a participant can only enrol where the trial actually runs. Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite (composite), InactivationReason; `UNIQUE (participant_id, trial_id, site_id)`; paired-null `CHECK`; filtered unique index for "one active trial at a time". |
 | **ConsentSigning** | Append-only log of every consent signing event: when, which version, who witnessed. PK `consent_signing_id`; FKs to Enrollment and ConsentVersion; `UNIQUE (enrollment_id, consent_version_id)`; protected by an append-only trigger. |
 
 : Table descriptions and key design choices {tbl-colwidths="[22,78]"}
 
-**Check constraints.** Phase/status/sex use `CHECK ... IN (...)` to guarantee
-clean categorical data for cross-trial reporting. Date checks
-(`end_date >= start_date`, `closed_date >= opened_date`,
-`inactivation_date >= enrolment_date`) prevent logically impossible records. The
-paired-null check on `Enrollment` guarantees a leaving date never appears without
+**Check constraints.** 
+
+* Phase/status/sex use `CHECK ... IN (...)` to guarantee
+clean categorical data for cross-trial reporting. 
+
+* Date checks (`end_date >= start_date`, `closed_date >= opened_date`,
+`inactivation_date >= enrolment_date`) prevent logically impossible records. 
+
+* The paired-null check on `Enrollment` guarantees a leaving date never appears without
 a reason and vice-versa.
 
 ## NULL and NOT NULL Decisions
 
-| Column | Decision | Meaning of NULL / rationale |
+| Column | Decision | Rationale |
 |:-----------------------|:---------|:------------------------------------------------|
 | `ClinicalTrial.end_date` | NULL | NULL is meaningful: the trial is still running. Current trials have no end date *yet*. |
-| `ClinicalTrial.start_date`, `status`, `phase` | NOT NULL | A trial cannot exist without these; absence would be an error, not a real state. |
-| `TrialSite.closed_date` | NULL | NULL = the site is still open for recruitment on that trial. |
-| `Enrollment.inactivation_date` & `inactivation_reason_id` | NULL (paired) | The classic "meaningful absence": NULL = still active. Both fill in on exit; the paired-null `CHECK` keeps them in step. |
-| `Participant.date_of_birth`, `registration_date`, `sex_at_birth` | NOT NULL | Recorded at registration and required for eligibility, age and demographic reporting. |
+| `ClinicalTrial.start_date`, `status`, `phase` | NOT NULL | A trial cannot exist without these. |
+| `TrialSite.closed_date` | NULL | The site can still be open for recruitment on that trial. |
+| `Enrollment.inactivation_date`, `inactivation_reason_id` | NULL (paired) | The classic "meaningful absence". The paired-null `CHECK` keeps them in step. |
+| `Participant.date_of_birth`, `registration_date`, `sex_at_birth` | NOT NULL | Required for eligibility, age and demographic reporting. |
 | `ConsentSigning.signed_date`, `witnessed_by` | NOT NULL | A consent event without a date or witness is not a valid consent event. |
 | `ConsentVersion.wording_text`, `effective_from` | NOT NULL | A consent version is meaningless without its wording and the date it took effect. |
 
-: Nullability decisions and their justification {tbl-colwidths="[31,16,53]"}
+: Nullability decisions and their justification {tbl-colwidths="[37,10,53]"}
 
 ## Relationships Between Tables
 
 | Tables | Type / FK | What it represents |
 |:--------------------------------|:-----------------------------------|:----------------------|
-| ClinicalTrial -- HospitalSite | M:N via `TrialSite` (FK `trial_id`, `site_id`) | A trial runs at many sites and a site hosts many trials; the link table also carries the open/close recruitment dates. |
+| ClinicalTrial -- HospitalSite | M:N via `TrialSite` (FK `trial_id`, `site_id`) | A trial runs at many sites and a site hosts many trials. The link table also carries the open/close recruitment dates. |
 | ClinicalTrial -> ConsentVersion | 1:M (FK `trial_id`) | One trial accumulates many consent-form versions over its life as the protocol changes. |
-| Participant -> Enrollment | 1:M (FK `participant_id`) | A participant may have several enrolments over time, only one active at once (filtered index). |
-| TrialSite -> Enrollment | 1:M (FK `trial_site_id`) | Each enrolment happens at exactly one trial-site. |
+| Participant -> Enrollment | 1:M (FK `participant_id`) | A participant may have several enrolments over time, only one active at once as defined per brief (filtered index). |
+| TrialSite -> Enrollment | 1:M (composite FK `trial_id, site_id`) | Each enrolment happens at exactly one trial-site pairing that the `TrialSite` link table confirms actually exists. |
 | InactivationReason -> Enrollment | 1:M optional (FK `inactivation_reason_id`) | A standardised reason classifies many exits; active enrolments reference none. |
 | Enrollment -> ConsentSigning | 1:M (FK `enrollment_id`) | One enrolment can have several signing events (original + re-consent after amendment). |
 | ConsentVersion -> ConsentSigning | 1:M (FK `consent_version_id`) | Each signing records which version was signed; one version is signed by many participants. |
@@ -114,20 +118,21 @@ a reason and vice-versa.
 : Relationships between tables {tbl-colwidths="[27,33,40]"}
 
 **Many-to-many resolution.** The only many-to-many relationship (ClinicalTrial
--- HospitalSite) is resolved with the `TrialSite` junction table, which carries
-its own surrogate key, a `UNIQUE (trial_id, site_id)` business key, and the
-recruitment open/close dates that are attributes of the *pairing* rather than of
-either entity alone.
+-- HospitalSite) is resolved with the `TrialSite` junction table. I decided to use a composite
+primary key `(trial_id, site_id)`. Therefore no surrogate is needed since the pairing itself is the row's identity.
 
 {{< pagebreak >}}
 
 # Part 2: SQL
 
-## INSERT statements --- one per table
+## INSERT statements
 
-All foreign-key values are resolved with subqueries on business keys --- no
-hard-coded IDENTITY integers. The remaining INSERTs are in
-`02_insert_reference_data.sql` and `03_insert_operational_data.sql`.
+Every INSERT that needs to reference another table (e.g. Enrollment needs a trial_id) looks up the ID up by a human-recognisable business key instead of hardcoding the raw number. There are no
+hard-coded IDENTITY integers to avoid mistakes. 
+
+::: callout-note
+ I have only shown the first insert per table in this report to illustrate the pattern. All INSERTs are in `script/HDS_DB_LAINSBURY_2026.sql`.
+:::
 
 **ClinicalTrial**
 
@@ -150,6 +155,9 @@ VALUES ('WBK-GEN', N'Westbrook General Hospital', N'London', N'England');
 INSERT INTO dbo.Participant (study_code, date_of_birth, sex_at_birth, registration_date)
 VALUES ('WBK-001', '1958-04-12', 'Male', '2021-11-03');
 ```
+
+
+{{< pagebreak >}}
 
 **InactivationReason**
 
@@ -178,18 +186,18 @@ VALUES (
  N'I agree to take part in the CARDIOPROTECT study. ... I may withdraw at any time without affecting my medical care.');
 ```
 
-**Enrollment** (resolves the trial-site from registration number + site code)
+**Enrollment** (resolves trial_id and site_id directly from business keys)
 
 ```sql
-INSERT INTO dbo.Enrollment (participant_id, trial_site_id, enrolment_date, inactivation_date, inactivation_reason_id)
+INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES (
- (SELECT participant_id FROM dbo.Participant WHERE study_code='WBK-001'),
- (SELECT ts.trial_site_id FROM dbo.TrialSite ts
-    JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
-    JOIN dbo.HospitalSite  hs ON hs.site_id  = ts.site_id
-    WHERE ct.registration_number='ISRCTN10234567' AND hs.site_code='WBK-GEN'),
+ (SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-001'),
+ (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
+ (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'),
  '2023-03-15', NULL, NULL);
 ```
+
+{{< pagebreak >}}
 
 **ConsentSigning** (resolves enrolment + version by business keys)
 
@@ -198,8 +206,7 @@ INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, 
 VALUES (
  (SELECT e.enrollment_id FROM dbo.Enrollment e
     JOIN dbo.Participant p ON p.participant_id = e.participant_id
-    JOIN dbo.TrialSite  ts ON ts.trial_site_id = e.trial_site_id
-    JOIN dbo.ClinicalTrial ct ON ct.trial_id = ts.trial_id
+    JOIN dbo.ClinicalTrial ct ON ct.trial_id = e.trial_id
     WHERE p.study_code='WBK-001' AND ct.registration_number='ISRCTN10234567'),
  (SELECT cv.consent_version_id FROM dbo.ConsentVersion cv
     JOIN dbo.ClinicalTrial ct ON ct.trial_id = cv.trial_id
@@ -211,7 +218,7 @@ VALUES (
 
 ## SQL Queries
 
-### Query 1 --- Current consent wording for CARDIOPROTECT
+### Query 1: Current consent wording for CARDIOPROTECT
 
 **Clinical question.** Before a consent discussion, a research nurse needs the
 current (most recently effective) consent wording for CARDIOPROTECT: version
@@ -229,16 +236,14 @@ ORDER  BY cv.effective_from DESC;
 
 ![Query 1 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query1.png){width=100%}
 
-**Expected result:** version `2`, effective `2024-01-15`, the wearable-devices
-wording.
 
 **Discussion.** The query filters to CARDIOPROTECT, orders versions by
 `effective_from` descending and keeps the top row, so it always returns the
 latest version even after future amendments. *Data quality:* it relies on
-`effective_from` being accurate --- a new version entered with a wrong or missing
+`effective_from` being accurate, a new version entered with a wrong or missing
 effective date could show the nurse out-of-date wording.
 
-### Query 2 --- Monthly trial status report
+### Query 2: Monthly trial status report
 
 **Clinical question.** A summary of each trial, its status, how long it has run
 in days, and whether it has an end date or is ongoing; active trials first, then
@@ -257,8 +262,6 @@ ORDER  BY CASE ct.status WHEN 'active' THEN 1 WHEN 'recruiting' THEN 2 ELSE 3 EN
 
 ![Query 2 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query2.png){width=100%}
 
-**Expected result (3 rows):** CARDIOPROTECT (active, Ongoing) first; BREATHE
-(recruiting, Ongoing) second; MOBILISE (completed, Ended, ~1460 days) last.
 
 **Discussion.** `COALESCE` substitutes today's date for trials with no end date
 so "days running" is meaningful for ongoing trials, and a `CASE` expression in
@@ -266,7 +269,7 @@ so "days running" is meaningful for ongoing trials, and a `CASE` expression in
 ongoing trials changes every day the report is run, so it is only a dated
 snapshot.
 
-### Query 3 --- Trial history for participant WBK-003
+### Query 3: Trial history for participant WBK-003
 
 **Clinical question.** Full history for WBK-003: every trial, enrolment date,
 inactivation date, and reason code; ordered by enrolment date. Active enrolments
@@ -276,8 +279,7 @@ have no reason.
 SELECT ct.trial_name, e.enrolment_date, e.inactivation_date, ir.reason_code
 FROM   dbo.Enrollment       e
 JOIN   dbo.Participant      p  ON p.participant_id = e.participant_id
-JOIN   dbo.TrialSite        ts ON ts.trial_site_id = e.trial_site_id
-JOIN   dbo.ClinicalTrial    ct ON ct.trial_id      = ts.trial_id
+JOIN   dbo.ClinicalTrial    ct ON ct.trial_id      = e.trial_id
 LEFT   JOIN dbo.InactivationReason ir ON ir.reason_id = e.inactivation_reason_id
 WHERE  p.study_code = 'WBK-003'
 ORDER  BY e.enrolment_date;
@@ -287,16 +289,18 @@ ORDER  BY e.enrolment_date;
 
 ![Query 3 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query3.png){width=100%}
 
-**Expected result (2 rows):** BREATHE, 2024-06-10, 2024-09-15,
-`consent_withdrawn`; then CARDIOPROTECT, 2024-10-01, NULL, NULL.
+
 
 **Discussion.** A `LEFT JOIN` to `InactivationReason` is essential: an active
-enrolment has a NULL reason and an INNER join would silently drop it. *Data
-quality:* a participant who left but whose `inactivation_reason_id` was never
-populated would show a leaving date with a blank reason --- the paired-null check
-constraint prevents exactly this.
+enrolment has a NULL reason and an INNER join would silently drop it. `Enrollment`
+stores `trial_id` directly (as part of its composite FK to `TrialSite`), so
+`ClinicalTrial` is joined straight off it with no `TrialSite` hop needed. 
 
-### Query 4 --- Audit of currently active enrolments
+*Data quality:* a participant who left but whose `inactivation_reason_id` was never
+populated would show a leaving date with a blank reason, the paired-null check
+constraint I entered in the table prevents this.
+
+### Query 4: Audit of currently active enrolments
 
 **Clinical question.** Each currently **active** participant with their trial,
 site, and enrolment date; ordered by trial name then enrolment date.
@@ -305,9 +309,8 @@ site, and enrolment date; ordered by trial name then enrolment date.
 SELECT p.study_code, ct.trial_name, hs.site_name, e.enrolment_date
 FROM   dbo.Enrollment    e
 JOIN   dbo.Participant   p  ON p.participant_id = e.participant_id
-JOIN   dbo.TrialSite     ts ON ts.trial_site_id = e.trial_site_id
-JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = ts.trial_id
-JOIN   dbo.HospitalSite  hs ON hs.site_id        = ts.site_id
+JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = e.trial_id
+JOIN   dbo.HospitalSite  hs ON hs.site_id       = e.site_id
 WHERE  e.inactivation_date IS NULL
 ORDER  BY ct.trial_name, e.enrolment_date;
 ```
@@ -316,18 +319,15 @@ ORDER  BY ct.trial_name, e.enrolment_date;
 
 ![Query 4 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query4.png){width=100%}
 
-**Expected result (4 rows):** WBK-005 / BREATHE / Westbrook General /
-2024-08-05; WBK-001 / CARDIOPROTECT / Westbrook General / 2023-03-15; WBK-003 /
-CARDIOPROTECT / Westbrook General / 2024-10-01; WBK-002 / CARDIOPROTECT / St
-Katherine's / 2025-01-10.
 
-**Discussion.** "Active" is expressed as `inactivation_date IS NULL`; joining
-through `TrialSite` to both the trial and the site reconstructs where each active
-participant sits. *Data quality:* the definition of "active" depends on
-inactivation being recorded promptly --- a participant who has left but whose
-exit was not entered would wrongly appear here.
+**Discussion.** "Active" is expressed as `inactivation_date IS NULL`. `Enrollment`
+stores `trial_id` and `site_id` directly, so `ClinicalTrial` and `HospitalSite`
+are joined straight off it, no `TrialSite` hop needed to reconstruct where
+each active participant sits. 
 
-### Query 5 --- Enrolment count per site (including empty sites)
+*Data quality:* the definition of "active" depends on inactivation being recorded promptly. A participant who has left but whose exit was not entered would wrongly appear here.
+
+### Query 5: Enrolment count per site (including empty sites)
 
 **Clinical question.** How many participants have ever been enrolled at each
 site, including sites with none. Show site name, city, total count, descending.
@@ -335,8 +335,7 @@ site, including sites with none. Show site name, city, total count, descending.
 ```sql
 SELECT hs.site_name, hs.city, COUNT(e.enrollment_id) AS total_enrolments
 FROM   dbo.HospitalSite hs
-LEFT   JOIN dbo.TrialSite  ts ON ts.site_id      = hs.site_id
-LEFT   JOIN dbo.Enrollment e  ON e.trial_site_id = ts.trial_site_id
+LEFT   JOIN dbo.Enrollment e ON e.site_id = hs.site_id
 GROUP  BY hs.site_name, hs.city
 ORDER  BY total_enrolments DESC;
 ```
@@ -345,16 +344,17 @@ ORDER  BY total_enrolments DESC;
 
 ![Query 5 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query5.png){width=100%}
 
-**Expected result (3 rows):** Westbrook General (London) 4; St Katherine's
-(Manchester) 3; Ridgeway Community (Bristol) 0.
 
-**Discussion.** Starting from `HospitalSite` with `LEFT JOIN`s preserves sites
+
+**Discussion.** Starting from `HospitalSite` with a `LEFT JOIN` preserves sites
 with no enrolments, and `COUNT(e.enrollment_id)` counts rows rather than NULLs so
-empty sites correctly score 0. *Data quality:* a site that participates in a
-trial but has not yet recorded any enrolments is indistinguishable from one that
-genuinely has none --- the zero needs interpretation in context.
+empty sites correctly score 0. `Enrollment` stores `site_id` directly, so it is
+joined straight off `HospitalSite` with no `TrialSite` hop needed. 
 
-### Query 6 --- Trials with an amended protocol
+*Data quality:* A site that participates in a trial but has not yet recorded any
+enrolments is indistinguishable from one that genuinely has none, the zero needs interpretation in context.
+
+### Query 6: Trials with an amended protocol
 
 **Clinical question.** Trials where the protocol was amended (more than one
 consent version): trial name, current status, number of versions; descending;
@@ -373,14 +373,14 @@ ORDER  BY version_count DESC;
 
 ![Query 6 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query6.png){width=100%}
 
-**Expected result (1 row):** CARDIOPROTECT, active, 2.
+
 
 **Discussion.** Grouping by trial and counting versions, then filtering with
-`HAVING COUNT(...) > 1`, isolates amended trials (`HAVING` filters the aggregate,
-which `WHERE` cannot). *Data quality:* this counts version *rows*, so a duplicate
-version entered in error would overstate the number of genuine amendments.
+`HAVING COUNT(...) > 1`, isolates amended trials (`HAVING` filters the aggregate, which `WHERE` cannot).
 
-### Query 7 --- Most recently enrolled participant per site
+*Data quality:* this counts version *rows*, so a duplicate version entered in error would overstate the number of genuine amendments.
+
+### Query 7: Most recently enrolled participant per site
 
 **Clinical question.** The most recently enrolled participant at each site across
 all trials: study code, trial name, site name, enrolment date.
@@ -392,9 +392,8 @@ WITH RankedEnrolments AS (
                               ORDER BY e.enrolment_date DESC, e.enrollment_id DESC) AS rn
     FROM   dbo.Enrollment    e
     JOIN   dbo.Participant   p  ON p.participant_id = e.participant_id
-    JOIN   dbo.TrialSite     ts ON ts.trial_site_id = e.trial_site_id
-    JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = ts.trial_id
-    JOIN   dbo.HospitalSite  hs ON hs.site_id        = ts.site_id
+    JOIN   dbo.ClinicalTrial ct ON ct.trial_id      = e.trial_id
+    JOIN   dbo.HospitalSite  hs ON hs.site_id       = e.site_id
 )
 SELECT study_code, trial_name, site_name, enrolment_date
 FROM   RankedEnrolments
@@ -406,14 +405,11 @@ ORDER  BY site_name;
 
 ![Query 7 output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query7.png){width=100%}
 
-**Expected result (2 rows):** WBK-002 / CARDIOPROTECT / St Katherine's Hospital /
-2025-01-10; WBK-003 / CARDIOPROTECT / Westbrook General Hospital / 2024-10-01.
-(Ridgeway has no enrolments, so it does not appear.)
 
-**Discussion.** `ROW_NUMBER()` partitioned by site and ordered by enrolment date
-descending ranks each site's enrolments; keeping `rn = 1` returns the newest per
-site, with `enrollment_id` as a deterministic tie-breaker. *Data quality:* if two
-participants share the same enrolment date the tie-break is arbitrary, so "most
+
+**Discussion.** `ROW_NUMBER()` partitioned by site and ordered by enrolment date descending ranks each site's enrolments; keeping `rn = 1` returns the newest per site, with `enrollment_id` as a deterministic tie-breaker. `Enrollment` stores `trial_id` and `site_id` directly, so `ClinicalTrial` and `HospitalSite` are joined straight off it with no `TrialSite` hop needed. 
+
+*Data quality:* if two participants share the same enrolment date the tie-break is arbitrary, so "most
 recent" may need a finer timestamp than a date to be unambiguous.
 
 {{< pagebreak >}}
@@ -422,22 +418,9 @@ recent" may need a finer timestamp than a date to be unambiguous.
 
 ## Why no participant names?
 
-Storing only a `study_code` pseudonymises the registry: it applies the UK GDPR
-data-minimisation principle (Article 5(1)(c)) and the Caldicott Principles of
-justifying every use of confidential information and using the minimum
-necessary, and means a breach of the trial database does not directly expose
-identities. Direct identifiers such as names live in a
-separate, access-controlled master linkage list held by the research office, not
-in the analytical database. In practice this shapes how staff work. Researchers
-query and report entirely on `study_code`, so trial analyses can be shared more
-freely because they carry no obvious identifiers. Clinical staff who need to act
-on a real patient --- to contact them or update their medical record --- must
-re-identify the person through the controlled linkage list, which is deliberately
-a separate, auditable step. The cost is friction and a dependency on that linkage
-being accurate and available: a broken or out-of-date mapping could mean a
-participant cannot be reached for a safety issue. The design therefore trades
-day-to-day convenience for a much stronger confidentiality and
-information-governance position.
+Storing only a `study_code` pseudonymises the registry. This follows the data-minimisation principle from the GDPR *Principles relating to processing of personal data* (GDPR Article 5(1)(c))[@art5gdpr].Additional, we could also refer to the Caldicott Principles [@caldicott] of justifying every use of confidential information and using the minimum necessary which reinforces the article 5 of the GDPR. This means a breach of the trial database would not directly expose personal identities and personal identities does not bring necessary information to the database to justify their inclusion. 
+
+Direct identifiers such as names would live in a separate, access-controlled master linkage list held by the research office. Researchers can query and report entirely on `study_code`, so trial analyses can be shared more freely because they carry no personal identifiers. The cost is friction and a dependency on the linkage to the access-controlled master linkage list: a broken or out-of-date mapping could mean a participant cannot be reached for a safety issue. The design therefore trades day-to-day convenience for a much stronger confidentiality and information-governance position.
 
 ## A situation where the data could mislead
 
@@ -459,18 +442,14 @@ silent gap. The fix is process plus monitoring, not just a query.
 ## Why consent records are append-only, and how to enforce it
 
 Consent records are the legal and ethical evidence that each participant agreed
-to the specific protocol version in force at the time. They must be append-only
-because consent is a historical fact: Good Clinical Practice (ICH-GCP) requires
-trial-critical records to carry a complete, tamper-evident audit trail, and
-editing or deleting a signing event would destroy the evidence that regulators,
-sponsors and ethics committees rely on to prove valid consent existed. If the rule were broken, a re-consent after a protocol
-amendment could be silently overwritten or a withdrawn consent erased, making it
-impossible to demonstrate which wording a participant actually agreed to and
+to the specific protocol version in force **at the time**. They must be append-only
+because consent is a historical fact. This requires trial-critical records to carry a complete, tamper-evident audit trail, and editing or deleting a signing event would destroy the evidence that regulators,sponsors and ethics committees rely on to prove valid consent existed. If the rule were broken, a re-consent after a protocol amendment could be silently overwritten or a withdrawn consent erased, making it impossible to demonstrate which wording a participant actually agreed to and
 undermining every downstream analysis that assumes valid consent.
 
-I would enforce this at the database level with an **`INSTEAD OF UPDATE, DELETE`
+I enforced this at the database level with an **`INSTEAD OF UPDATE, DELETE`
 trigger** on `ConsentSigning` that rejects any such operation with an error,
-while leaving `INSERT` free (see `05_append_only_trigger.sql`):
+while leaving `INSERT` free (see `script/HDS_DB_LAINSBURY_2026.sql`).This guarantees the rule regardless of which application or user connects, which
+a permission grant alone would not. 
 
 ```sql
 CREATE OR ALTER TRIGGER dbo.trg_ConsentSigning_AppendOnly
@@ -483,23 +462,21 @@ BEGIN
 END;
 ```
 
-This guarantees the rule regardless of which application or user connects, which
-a permission grant alone would not. For stronger assurance, a SQL Server
-append-only **ledger table** refuses UPDATE/DELETE at the engine level and
-chains rows into a cryptographically verifiable hash tree, so even an
-administrator cannot tamper with a consent record undetectably --- stronger than
-the trigger, which a sufficiently privileged account could disable.
 
 {{< pagebreak >}}
 
+# Reference
+
 # Appendix A --- Data dictionary {.unnumbered}
 
-A complete column-level reference for every table, derived from
-`script/01_create_tables.sql`. *Key:* PK = primary key, FK = foreign key,
-UK = unique (business) key. All surrogate `*_id` keys are `INT IDENTITY(1,1)`.
+A complete column-level reference for every table, derived from the
+`CREATE TABLE` section of `script/HDS_DB_LAINSBURY_2026.sql`. *Key:* PK = primary
+key, FK = foreign key, UK = unique (business) key. All surrogate `*_id` keys are
+`INT IDENTITY(1,1)`.
 
-This dictionary is not static documentation: `script/06_metadata.sql` stores
-every table description --- and the column descriptions where meaning is not
+This dictionary is not static documentation: the metadata section of
+`script/HDS_DB_LAINSBURY_2026.sql` stores every table description --- and the
+column descriptions where meaning is not
 self-evident, in particular the meaningful-NULL columns --- **in the database
 catalog itself** as `MS_Description` extended properties. The dictionary can
 therefore be regenerated at any time (or consumed by data-catalogue tooling) by
@@ -557,7 +534,7 @@ ORDER  BY t.name, c.column_id;
 | `participant_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
 | `study_code` | VARCHAR(15) | NOT NULL | UK | Pseudonym; only external identifier (no names held). |
 | `date_of_birth` | DATE | NOT NULL | | `CHECK (date_of_birth < registration_date)`. |
-| `sex_at_birth` | VARCHAR(10) | NOT NULL | | `CHECK` IN ('Male','Female','Intersex','Unknown'). |
+| `sex_at_birth` | VARCHAR(10) | NOT NULL | | `CHECK` IN ('Male','Female'). Records biological sex at birth, not gender identity --- only two values are captured for this field. |
 | `registration_date` | DATE | NOT NULL | | Date first registered with the research office. |
 
 : Participant {tbl-colwidths="[24,15,11,6,44]"}
@@ -576,13 +553,12 @@ ORDER  BY t.name, c.column_id;
 
 | Column | Type | Null | Key | Notes |
 |:----------------|:------------|:---------|:------|:---------------------------|
-| `trial_site_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
-| `trial_id` | INT | NOT NULL | FK, UK | -> `ClinicalTrial`. Part of `UNIQUE (trial_id, site_id)`. |
-| `site_id` | INT | NOT NULL | FK, UK | -> `HospitalSite`. Part of `UNIQUE (trial_id, site_id)`. |
+| `trial_id` | INT | NOT NULL | PK, FK | -> `ClinicalTrial`. Part of the composite PK `(trial_id, site_id)`. |
+| `site_id` | INT | NOT NULL | PK, FK | -> `HospitalSite`. Part of the composite PK `(trial_id, site_id)`. |
 | `opened_date` | DATE | NOT NULL | | Date the site opened for recruitment on this trial. |
 | `closed_date` | DATE | NULL | | NULL = still open. `CHECK (closed_date >= opened_date)`. |
 
-: TrialSite {tbl-colwidths="[20,13,11,9,47]"}
+: TrialSite. The only table in the schema without a surrogate IDENTITY key --- the `(trial_id, site_id)` pairing is itself the row's identity. {tbl-colwidths="[20,13,11,9,47]"}
 
 ## ConsentVersion {.unnumbered}
 
@@ -601,8 +577,9 @@ ORDER  BY t.name, c.column_id;
 | Column | Type | Null | Key | Notes |
 |:-------------------------|:-----------|:---------|:------|:-----------------------|
 | `enrollment_id` | INT IDENTITY | NOT NULL | PK | Surrogate primary key. |
-| `participant_id` | INT | NOT NULL | FK, UK | -> `Participant`. Part of `UNIQUE (participant_id, trial_site_id)`. |
-| `trial_site_id` | INT | NOT NULL | FK, UK | -> `TrialSite` (captures trial and site). Part of the unique key. |
+| `participant_id` | INT | NOT NULL | FK, UK | -> `Participant`. Part of `UNIQUE (participant_id, trial_id, site_id)`. |
+| `trial_id` | INT | NOT NULL | FK, UK | Composite FK with `site_id` -> `TrialSite` (confirms the site actually runs the trial). Part of the unique key. |
+| `site_id` | INT | NOT NULL | FK, UK | Composite FK with `trial_id` -> `TrialSite`. Part of the unique key. |
 | `enrolment_date` | DATE | NOT NULL | | Date enrolment began. |
 | `inactivation_date` | DATE | NULL | | NULL = still active. `CHECK (inactivation_date >= enrolment_date)`. |
 | `inactivation_reason_id` | INT | NULL | FK | -> `InactivationReason`. Paired-null `CHECK` with `inactivation_date`. |
@@ -629,18 +606,19 @@ ORDER  BY t.name, c.column_id;
 
 # Appendix B --- File manifest {.unnumbered}
 
-| File | Contents |
-|:-----------------------------------------|:---------------------------------------|
-| `script/00_create_database.sql` | (Re)creates the `HDS_ClinicalTrial` database |
-| `script/01_create_tables.sql` | CREATE TABLEs, constraints, indexes |
-| `script/02_insert_reference_data.sql` | The five reference sheets from the brief |
-| `script/03_insert_operational_data.sql` | TrialSite, Enrollment, ConsentSigning data |
-| `script/04_queries.sql` | The seven queries |
-| `script/05_append_only_trigger.sql` | Append-only enforcement for `ConsentSigning` |
-| `script/06_metadata.sql` | Extended-property metadata + catalog-driven data dictionary |
-| `script/HDS_DB_LAINSBURY_2026.sql` | **Submission file** --- everything in run order |
+The submission is a single, self-contained script, run top to bottom:
 
-: File manifest
+| Section (in run order) | Contents |
+|:-----------------------------------------|:---------------------------------------|
+| Create database | (Re)creates the `HDS_ClinicalTrial` database |
+| Create tables | `CREATE TABLE`s, constraints, indexes |
+| Insert reference data | The five reference sheets from the brief |
+| Insert additional operational data | `TrialSite`, `Enrollment`, `ConsentSigning` data |
+| Append-only trigger | `INSTEAD OF UPDATE, DELETE` enforcement on `ConsentSigning` |
+| Queries | The seven queries |
+| Metadata | Extended-property metadata + catalog-driven data dictionary |
+
+: `script/HDS_DB_LAINSBURY_2026.sql` --- section contents in run order
 
 {{< pagebreak >}}
 
@@ -705,11 +683,11 @@ specified in the text.
 ## Questions for reflection {.unnumbered}
 
 **1. Which aspects of this assignment are you most uncertain about and/or would
-most like to receive feedback on?** Whether pointing `Enrollment` at the
-`TrialSite` link table (rather than holding separate trial and site foreign
-keys) is considered good practice or over-normalisation; and whether the
-filtered unique index is an acceptable way to express the "one active trial at
-a time" rule.
+most like to receive feedback on?** Whether giving `Enrollment` a composite FK
+`(trial_id, site_id)` straight to `TrialSite` (rather than a single surrogate
+`trial_site_id` pointer) is considered good practice or over-normalisation; and
+whether the filtered unique index is an acceptable way to express the "one
+active trial at a time" rule.
 
 **5. Using the wording in the rubric, how would you describe the quality of the
 different aspects of your work?** The ERD, table descriptions and relationships
@@ -720,80 +698,67 @@ is resolved by subquery on a business key.
 
 {{< pagebreak >}}
 
-# Appendix A: Additional Operational Data {.unnumbered}
+# Appendix D --- Additional Operational Data {.unnumbered}
 
 ## Overview
 
 Assignment section 6.1 specifies: "In addition to the reference data provided, you must also add **your own data** to all the other records you have designed and there should be **enough data of your own to answer all seven queries meaningfully**."
 
-The reference data provided (ClinicalTrial, HospitalSite, InactivationReason, Participant, ConsentVersion) is supplemented by three additional enrolment and consent signing records, which enrich the operational dataset and make all seven queries more demonstrative.
+The reference data provided (ClinicalTrial, HospitalSite, InactivationReason, Participant, ConsentVersion) contains no `TrialSite`, `Enrollment`, or `ConsentSigning` rows at all --- those three tables are entirely self-authored operational data. Beyond the minimum needed to satisfy the six worked-example requirements, two further **trial transitions** were added to enrich Queries 4, 5 and 7. `TrialSite` uses a composite primary key `(trial_id, site_id)` rather than a surrogate IDENTITY (see Table Descriptions, main body); as a result `Enrollment` stores `trial_id` and `site_id` directly rather than a single `trial_site_id` pointer.
 
-## Additional Enrolments Added
+## Why a transition, not a second simultaneous enrolment
 
-### 1. WBK-001: Multi-site CARDIOPROTECT enrolment at St Katherine's (2025-02-01)
+The schema enforces the brief's rule that a participant may be actively enrolled in only one trial at a time with a filtered unique index:
 
-**Data added:**
-- Participant WBK-001 enrolled in CARDIOPROTECT trial at St Katherine's North Hospital
-- Enrolment date: 2025-02-01 (most recent enrolment at that site)
-- Status: ACTIVE (no inactivation)
-- Consent: Signed CARDIOPROTECT v2 on 2025-02-01, witnessed by Dr R. Mensah
+```sql
+CREATE UNIQUE INDEX UX_Enrollment_OneActivePerParticipant
+    ON dbo.Enrollment(participant_id)
+    WHERE inactivation_date IS NULL;
+```
 
-**Impact on queries:**
-- **Query 4**: Expands active enrolments from 3 to 5, showing multi-site participation within the same trial
-- **Query 7**: Creates multiple candidates at STK-NOR, making the "most recent per site" selection non-trivial; demonstrates ROW_NUMBER() logic correctly filters to 2025-02-01 (most recent for that site)
+This permits at most one row per participant with `inactivation_date IS NULL`. Consequently, the two additions below each **close** the participant's existing active enrolment first (an `UPDATE` in place, preserving the original row as the brief requires), then **insert** a new active enrolment --- exactly the "left a previous trial and later joined a new one" pattern the scenario itself describes.
 
-### 2. WBK-002: Multi-trial BREATHE enrolment at Reading Community (2025-03-01)
+## Additional Trial Transitions Added
 
-**Data added:**
-- Participant WBK-002 enrolled in BREATHE trial at Reading Community Hospital
-- Enrolment date: 2025-03-01
-- Status: ACTIVE (no inactivation)
-- Consent: Signed BREATHE v1 on 2025-03-01, witnessed by Nurse S. Patel
-- **Significance**: This is the first and only enrolment at RDG-COM, activating a previously empty site
-
-**Impact on queries:**
-- **Query 5**: Originally showed 2 sites with enrolments; now shows all 3 sites:
-  - St Katherine's North: 4 enrolments
-  - Westbrook General: 3 enrolments
-  - Reading Community: 1 enrolment ← NEW
-  - This demonstrates LEFT JOIN logic correctly includes sites with zero prior enrolments and counts grow as new data is added
-- **Query 4**: Increases active enrolments count
-
-### 3. WBK-005: Multi-trial CARDIOPROTECT enrolment at St Katherine's (2025-04-01)
+### 1. WBK-002: CARDIOPROTECT (St Katherine's) closed, BREATHE (Reading Community) opened
 
 **Data added:**
-- Participant WBK-005 enrolled in CARDIOPROTECT trial at St Katherine's North Hospital
-- Enrolment date: 2025-04-01 (most recent enrolment across entire database)
-- Status: ACTIVE (no inactivation)
-- Consent: Signed CARDIOPROTECT v2 on 2025-04-01, witnessed by Nurse A. Okafor
+- `UPDATE`: WBK-002's active CARDIOPROTECT enrolment at St Katherine's is closed --- `inactivation_date = 2025-02-15`, `inactivation_reason_id` = `eligibility_lost`
+- `INSERT`: new active enrolment --- BREATHE at Reading Community, `enrolment_date = 2025-03-01`
+- `INSERT`: consent signing --- BREATHE v1, signed 2025-03-01, witnessed by Nurse S. Patel
+- **Significance**: this is the first and only enrolment ever recorded at Reading Community, activating a previously empty site
 
 **Impact on queries:**
-- **Query 4**: Provides 5th active enrolment, showing substantial active roster
-- **Query 7**: Most recent participant across all sites is now WBK-005 at STK-NOR on 2025-04-01, making the "most recent per site" selection clear (different dates per site prove correct windowing)
+- **Query 5**: Reading Community moves from 0 to 1 total enrolment --- all three sites now appear with a non-zero count, demonstrating the `LEFT JOIN` correctly includes a site the moment it gains its first enrolment
+- **Query 4**: WBK-002 still appears (now under BREATHE/Reading Community instead of CARDIOPROTECT/St Katherine's) --- the active count is unchanged, but site/trial diversity increases
+- **Query 7**: Reading Community now has a candidate row, so all three sites are represented in the "most recent per site" result
+
+### 2. WBK-005: BREATHE (Westbrook General) closed, CARDIOPROTECT (St Katherine's) opened
+
+**Data added:**
+- `UPDATE`: WBK-005's active BREATHE enrolment at Westbrook General is closed --- `inactivation_date = 2025-03-15`, `inactivation_reason_id` = `clinician_decision`
+- `INSERT`: new active enrolment --- CARDIOPROTECT at St Katherine's, `enrolment_date = 2025-04-01` (the most recent enrolment date in the whole database)
+- `INSERT`: consent signing --- CARDIOPROTECT v2 (the current version), signed 2025-04-01, witnessed by Nurse A. Okafor
+
+**Impact on queries:**
+- **Query 7**: gives St Katherine's a genuine choice between two dated candidates (WBK-002's original 2025-01-10 enrolment and WBK-005's 2025-04-01 enrolment), so the `ROW_NUMBER() OVER (PARTITION BY site ...)` logic is doing real selection work rather than returning a trivial single-row partition
+- **Query 4**: WBK-005 still appears (now under CARDIOPROTECT/St Katherine's instead of BREATHE/Westbrook General)
 
 ## Data Coverage Summary
 
-| Metric | Original | Enhanced | Impact |
-|:--------|:--------:|:--------:|:-------|
-| Enrollment records | 7 | 10 | +43% coverage |
-| Active enrolments | 3 | 7 | Substantial Query 4 results |
-| Hospital sites with enrolments | 2 | 3 | All sites represented for Query 5 |
-| Consent signing events | 8 | 11 | All enrolments have corresponding signatures |
-| Participants with multi-site participation | 0 | 2 (WBK-001, WBK-002) | Demonstrates fuller data model |
+| Metric | Before additions | After additions |
+|:--------|:--------:|:--------:|
+| Enrollment rows | 7 | 9 |
+| Active enrolments | 4 | 4 (unchanged --- each transition closes one, opens one) |
+| Hospital sites with $\geq$1 enrolment ever | 2 | 3 (Reading Community now included) |
+| Consent signing events | 8 | 10 |
+| Trials each active participant has moved between | 0 | 2 participants (WBK-002, WBK-005) demonstrate the "left one trial, joined another" pattern |
 
-## Submission Compliance Checklist
+## Query 4, 5 and 7 results after the additions
 
-- ✅ **Additional data added**: 3 new enrolments + 3 new consent signings (student-designed)
-- ✅ **Subquery pattern maintained**: All FK lookups use subqueries on business keys (registration_number, site_code, study_code), never hardcoded IDs
-- ✅ **Append-only pattern**: ConsentSigning records are immutable; consent history is preserved
-- ✅ **Meaningful query support**: All seven queries return richer results; no artificial filtering needed
-- ✅ **Brief requirements met**: Enough data for queries to be meaningful; enrolments span multiple sites and trials; Query 3 (WBK-003), Query 5 (all sites), and Query 7 (most recent selection) all benefit
+**Query 4 (active enrolments, 4 rows):** WBK-002 / BREATHE / Reading Community / 2025-03-01; WBK-001 / CARDIOPROTECT / Westbrook General / 2023-03-15; WBK-003 / CARDIOPROTECT / Westbrook General / 2024-10-01; WBK-005 / CARDIOPROTECT / St Katherine's / 2025-04-01.
 
-## Use of generative artificial intelligence {.unnumbered}
+**Query 5 (enrolments per site, 3 rows):** Westbrook General 4; St Katherine's 4; Reading Community 1.
 
-| | |
-|:--------------------------------------------------------|:-------------------------------|
-| Which permitted use of generative AI are you acknowledging? | Review and verification of my own draft work |
-| Which generative AI tool did you use (name and version)? | Claude Code (Anthropic Claude Fable 5) |
-| What did you use the tool for? | Reviewing the draft report and SQL script against the brief; executing the SQL script on Microsoft SQL Server to confirm it runs without errors and that the seven queries return the expected results; checking internal consistency between the report and the script; computing the coversheet word counts. |
-| How have you used or changed the generative AI's output? | The database design, SQL and written prose are my own. Following the AI-assisted review I corrected one inconsistency (aligning the `sex_at_birth` CHECK constraint in the combined script with the data dictionary) and completed the coversheet. |
+**Query 7 (most recent per site, 3 rows):** Reading Community --- WBK-002 / BREATHE / 2025-03-01; St Katherine's --- WBK-005 / CARDIOPROTECT / 2025-04-01; Westbrook General --- WBK-003 / CARDIOPROTECT / 2024-10-01.
+

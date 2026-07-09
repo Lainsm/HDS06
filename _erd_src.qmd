@@ -56,9 +56,8 @@ erDiagram
         nvarchar reason_description
     }
     TrialSite {
-        int trial_site_id PK
-        int trial_id FK
-        int site_id FK
+        int trial_id "PK, FK"
+        int site_id "PK, FK"
         date opened_date
         date closed_date
     }
@@ -72,7 +71,8 @@ erDiagram
     Enrollment {
         int enrollment_id PK
         int participant_id FK
-        int trial_site_id FK
+        int trial_id FK
+        int site_id FK
         date enrolment_date
         date inactivation_date
         int inactivation_reason_id FK
