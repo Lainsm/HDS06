@@ -33,6 +33,7 @@ mermaid:
 execute:
   echo: true
   eval: false
+df-print: tibble
 ---
 
 # Introduction {.unnumbered}
@@ -105,19 +106,28 @@ clean categorical data for reporting. **Caveat:** the `sex_at_birth` field was i
 
 ### NULL and NOT NULL Decisions
 
-I have not included every column in the table below, only those where the NULLability decision is not self-evident or requires justification. The table below explains why a column is allowed to be NULL or must be NOT NULL.
+The two tables below cover every column in the schema (IDENTITY primary keys, and `TrialSite`'s composite-PK columns, are NOT NULL by definition and are omitted).
 
-| Column | Decision | Rationale |
-|:-----------------------|:---------|:------------------------------------------------|
-| `ClinicalTrial.end_date` | NULL | NULL is meaningful: the trial is still running. Current trials have no end date *yet*. |
-| `ClinicalTrial.start_date`, `status`, `phase` | NOT NULL | A trial cannot exist without these columns populated. |
-| `TrialSite.closed_date` | NULL | The site can still be open for recruitment on that trial. |
-| `Enrollment.inactivation_date`, `inactivation_reason_id` | NULL (paired) | This is  a "meaningful absence". The paired-null `CHECK` keeps them in step. |
-| `Participant.date_of_birth`, `registration_date`, `sex_at_birth` | NOT NULL | Required for eligibility, age and demographic reporting. |
-| `ConsentSigning.signed_date`, `witnessed_by` | NOT NULL | A consent event without a date or witness is not a valid consent event. |
-| `ConsentVersion.wording_text`, `effective_from` | NOT NULL | A consent version is meaningless without its wording and the date it took effect. |
+| Table | Column | Rationale |
+|:---------------|:------------------------|:-------------------------------------|
+| ClinicalTrial | `end_date` | If NULL,the trial is still running. Current trials have no end date *yet*. |
+| TrialSite | `closed_date` | The site can still be open for recruitment on that trial. |
+| Enrollment | `inactivation_date`, `inactivation_reason_id` | This is a "meaningful absence". the participant is still active in the trial. The pair must be NULL (or populated) together therefore the paired-null `CHECK` keeps them in step. |
 
-: Nullability decisions and their justification {tbl-colwidths="[37,10,53]"}
+: Columns allowing NULL values {tbl-colwidths="[20,28,52]"}
+
+| Table | Column | Rationale |
+|:---------------|:------------------------|:-------------------------------------|
+| ClinicalTrial | `start_date`, `status`, `phase` | A trial cannot exist without these columns populated. |
+| TrialSite; Enrollment; ConsentVersion | `opened_date`; `enrolment_date`; `effective_from` | Every record's timeline must begin somewhere. Unlike their end-date partners above, an absent value would carry no meaning. |
+| Participant | `date_of_birth`, `registration_date`, `sex_at_birth` | Required for eligibility, age and demographic reporting. |
+| ConsentSigning | `signed_date`, `witnessed_by` | A consent event without a date or witness is not a valid consent event. |
+| ConsentVersion | `wording_text` | A consent version is meaningless without its wording. |
+| Enrollment; ConsentSigning; ConsentVersion | FK columns: `participant_id`, `trial_id`, `site_id`; `enrollment_id`, `consent_version_id`; `trial_id` | A child row cannot exist without its parents. Only exception is with `inactivation_reason_id`, the one deliberately nullable FK, paired with inactivation_date. |
+| ClinicalTrial; HospitalSite; Participant; InactivationReason; ConsentVersion | Unique keys: `registration_number`; `site_code`; `study_code`; `reason_code`; `version_number` | These UNIQUE keys are the look-up targets of the INSERT subqueries. A NULL here would break that pattern and the insertion would fail. |
+| ClinicalTrial; HospitalSite; InactivationReason | Descriptive fields: `trial_name`; `site_name`, `city`, `country`; `reason_description` | A reference row without its human-readable label is unusable in reports, it is a reporting requirement. |
+
+: Columns strictly NOT NULL {tbl-colwidths="[20,28,52]"}
 
 ## Relationships Between Tables
 
