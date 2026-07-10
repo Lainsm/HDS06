@@ -237,7 +237,7 @@ GO
 
 /* ============================================================================
 
-   Using both the reference data supplied (Excel file provided with the brief) and additional data as per brief.
+   Using both the reference data supplied (.csv files provided with the brief) and additional data as per brief.
 
    FK look-ups use subqueries on business keys. No hard-coded IDENTITY values as seen in course.
    ============================================================================ */
@@ -602,7 +602,7 @@ BEGIN
 END;
 GO
 
-/* ---- Optional verification (these two statements SHOULD fail with error 51000):
+/* --- you can use these two query as verification (these two statements SHOULD fail with error 51000):
 
 
    UPDATE dbo.ConsentSigning SET witnessed_by = N'Someone Else'

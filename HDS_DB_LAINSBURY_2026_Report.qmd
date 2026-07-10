@@ -41,8 +41,8 @@ df-print: tibble
 # Introduction {.unnumbered}
 
 This report designs a fictional relational database (DB) for the Westbrook University Hospitals
-NHS Trust Clinical Trial Participant Registry. It is a Microsoft SQL
-Server (T-SQL), populated with fictional data. The DB is then used to answer seven fictional clinical questions via distinct SQL queries.
+NHS Trust Clinical Trial Participant Registry, implements it in Microsoft SQL Server (T-SQL),
+populates it with fictional data and answers seven clinical questions via SQL queries.
 
 ::: callout-note
 **Reproducing the results.** Please run `script/HDS_DB_LAINSBURY_2026.sql`. This is the requested
@@ -58,7 +58,7 @@ SQL Server.
 
 ## Entity Relationship Diagram
 
-My database schema (dbo.) has eight tables. I added 3 additional tables from the five generated from the .csv files: `TrialSite` resolves the trial site many-to-many, `Enrollment` records a participant's participation in a trial at a site and `ConsentSigning` is the append-only audit log of consent events. The ERD is shown in crow's-foot notation with the logic between the connecton in @fig-erd.
+My database schema (dbo.) has eight tables: the five reference tables provided as .csv files, plus three of my own --- `TrialSite` resolves the trial-site many-to-many, `Enrollment` records a participant's participation in a trial at a site and `ConsentSigning` is the append-only audit log of consent events. The ERD is shown in crow's-foot notation in @fig-erd.
 
 ![Entity Relationship Diagram (crow's-foot notation).](erd.png){#fig-erd width=100%}
 
@@ -69,7 +69,7 @@ My database schema (dbo.) has eight tables. I added 3 additional tables from the
 Every table uses a surrogate `INT IDENTITY` primary key for internal
 joins, plus one or more **UNIQUE keys (or business keys)** for the values clinical staff would actually recognise. 
 
-Every foreign key targets the surrogate key, never the business key. This render the intake slighlty more verbose but is a personal choice for data integrity and maintainability. This study uses externally issued code such as the ISRCTN number. If they were to change, they can then be corrected in one parent row without cascading. The unique keys are used in INSERT look-up subqueries. In the real world, the business keys would be known to the data-entry staff and the look-ups would be hidden behind a user interface/form or via a staging table.
+Every foreign key targets the surrogate key, never the business key. This renders the inserts slightly more verbose but is a personal choice for data integrity and maintainability. This study uses externally issued codes such as the ISRCTN number. If they were to change, they can then be corrected in one parent row without cascading. The unique keys are used in INSERT look-up subqueries. In the real world, the business keys would be known to the data-entry staff and the look-ups would be hidden behind a user interface/form or via a staging table.
 
 ### Table Descriptions
 
@@ -78,10 +78,10 @@ Every foreign key targets the surrogate key, never the business key. This render
 | **ClinicalTrial** | One row per trial. PK `trial_id` (IDENTITY). UNIQUE `registration_number` (ISRCTN number) is the externally recognised natural key. Children reference `trial_id`, never the ISRCTN number. |
 | **HospitalSite** | One row per site. PK `site_id`. UNIQUE `site_code` (e.g. `WBK-GEN`) are the operational natural key. Children reference `site_id`, never `site_code`. |
 | **Participant** | One pseudonymised participant per row, **no names held**. PK `participant_id`. UNIQUE `study_code`, the pseudonym, is the only safe external identifier. `CHECK (date_of_birth < registration_date)`. `Enrollment` references `participant_id`, never the study code. |
-| **InactivationReason** | Controlled vocabulary of reasons a participant leaves a trial, so exits report consistently across trials. PK `reason_id`. the UNIQUE `reason_code` is the stable report token. `Enrollment` references `reason_id`, so codes can be renamed safely. |
+| **InactivationReason** | Controlled vocabulary of reasons a participant leaves a trial, so exits report consistently across trials. PK `reason_id`. The UNIQUE `reason_code` is the stable report token. `Enrollment` references `reason_id`, so codes can be renamed safely. |
 | **TrialSite** | **Link table** resolving the trial- site many-to-many. It also records when each site opened/closed for recruitment on that trial. I use a composite PK `(trial_id, site_id)`. The pairing is the row's identity, so no surrogate is used (unlike every other table). FKs to ClinicalTrial and HospitalSite. Both FKs reference the parents' surrogate keys. |
 | **ConsentVersion** | Every approved version of a trial's consent form, including wording and effective date. Any old consent versions is never overwritten (under the principle of always add rather than overwrite). PK `consent_version_id`. `UNIQUE (trial_id, version_number)`. The FK references `trial_id`, not the ISRCTN number to follow the same design pattern as other tables. |
-| **Enrollment** | A participant enrolled in a trial at a specific site. It carries `(trial_id, site_id)` as a composite FK straight to `TrialSite`, so trial **and** site are captured together and a participant can only enrol where the trial actually runs. The alternative --- a surrogate `trial_site_id` pointer --- would enforce the same rule but force every query to hop through `TrialSite` to learn the trial or site; storing the pair keeps enrolment rows self-describing at the cost of one extra INT column, without denormalising (the composite FK keeps the pair consistent). Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite (composite), InactivationReason; `UNIQUE (participant_id, trial_id, site_id)`; paired-null `CHECK`. |
+| **Enrollment** | A participant enrolled in a trial at a specific site. It carries `(trial_id, site_id)` as a composite FK straight to `TrialSite`, so trial **and** site are captured together and a participant can only enrol where the trial actually runs. The alternative --- a surrogate `trial_site_id` pointer --- would enforce the same rule but force every query to hop through `TrialSite`; storing the pair keeps enrolment rows self-describing without denormalising (the composite FK keeps the pair consistent). Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite (composite), InactivationReason; `UNIQUE (participant_id, trial_id, site_id)`; paired-null `CHECK`. |
 | **ConsentSigning** | Append-only log of every consent signing event: when, which version, who witnessed. PK `consent_signing_id`; FKs to Enrollment and ConsentVersion; `UNIQUE (enrollment_id, consent_version_id)`; protected by an append-only trigger. Both FKs reference surrogate keys. `CHECK` restricts `witnessed_by` to name characters (forename + surname). |
 
 : Table descriptions and key design choices {tbl-colwidths="[22,78]"}
@@ -91,7 +91,7 @@ Every foreign key targets the surrogate key, never the business key. This render
 ### Column constraints 
 
 * Phase/status/sex use `CHECK ... IN (...)` to force controlled vocabularies and
-clean categorical data for reporting. **Caveat:** the `sex_at_birth` field was interpreted as biological sex and not gender. It only has two values captured for this field. This is a design choice to keep the schema simple and **not** a statement on gender identity. In a production DB this would be reviewed to follow best practice and local healthcare inclusivity guidance.
+clean categorical data for reporting. **Caveat:** `sex_at_birth` is interpreted as biological sex at birth, not gender identity, and captures only two values to keep the schema simple; in a production DB this would be reviewed against best practice and local healthcare inclusivity guidance.
 
 * I use date checks (`end_date >= start_date`, `closed_date >= opened_date`,
 `inactivation_date >= enrolment_date`, `date_of_birth < registration_date`) throughout to prevent logically impossible records. The first three use `>=` because a same-day pair is legitimate; the birth-date check is deliberately strict (`<`) as a participant cannot register with the research office on or before the day they were born.
@@ -114,9 +114,9 @@ The two tables below cover every column in the schema (IDENTITY primary keys, an
 
 | Table | Column | Rationale |
 |:---------------|:------------------------|:-------------------------------------|
-| ClinicalTrial | `end_date` | If NULL,the trial is still running. Current trials have no end date *yet*. |
+| ClinicalTrial | `end_date` | If NULL, the trial is still running. Current trials have no end date *yet*. |
 | TrialSite | `closed_date` | The site can still be open for recruitment on that trial. |
-| Enrollment | `inactivation_date`, `inactivation_reason_id` | This is a "meaningful absence". the participant is still active in the trial. The pair must be NULL (or populated) together therefore the paired-null `CHECK` keeps them in step. |
+| Enrollment | `inactivation_date`, `inactivation_reason_id` | This is a "meaningful absence": the participant is still active in the trial. The pair must be NULL (or populated) together therefore the paired-null `CHECK` keeps them in step. |
 
 : Columns allowing NULL values {tbl-colwidths="[20,28,52]"}
 
@@ -155,17 +155,15 @@ The two tables below cover every column in the schema (IDENTITY primary keys, an
 
 ## INSERT statements
 
-Every INSERT that references another table (e.g. Enrollment needs a trial_id) looks the ID up by a human-recognisable business key. There is no use of hard-coded IDENTITY integers anywhere. It made the script more complexe but is a best practice for maintainability. I approached this assignment as an exercise. In real life production, the business keys would be known to the data-entry staff and the look-ups would be hidden behind a user interface/form or via a staging table.
-
-Additionally I have added data into the DB to allow the queries to return meaningful results. The data is fictional and does not represent any real trial, site or participant.
+Every INSERT that references another table (e.g. Enrollment needs a trial_id) looks the ID up by a human-recognisable business key. There is no use of hard-coded IDENTITY integers anywhere. It made the script more verbose but is best practice for maintainability, as discussed in the key design choices above. The added data is fictional and does not represent any real trial, site or participant.
 
 ::: callout-note
- As requested in the brief. I have only shown the first insert per table in this report to illustrate the pattern. All INSERTs are in `script/HDS_DB_LAINSBURY_2026.sql`.
+As requested in the brief, only the first INSERT per table is shown here; the rest are in `script/HDS_DB_LAINSBURY_2026.sql`.
 :::
 
 **ClinicalTrial**
 
-The three trials come straight from the reference data provided (data/ClinicalTrials.csv). No FK is needed so the values are inserted directly. SQL Server generates the IDENTITY `trial_id`.
+The three trials come straight from the reference data provided (data/ClinicalTrial.csv). No FK is needed so the values are inserted directly. SQL Server generates the IDENTITY `trial_id`.
 
 ```sql
 INSERT INTO dbo.ClinicalTrial (registration_number, trial_name, phase, status, start_date, end_date)
@@ -175,7 +173,7 @@ VALUES ('ISRCTN10234567', N'CARDIOPROTECT: Cardiac Rehabilitation in Post-MI Pat
 
 **HospitalSite**
 
-The three hospital sites are from the reference data (data/HospitalSites.csv), inserted directly with no look-up needed.
+The three hospital sites are from the reference data (data/HospitalSite.csv), inserted directly with no look-up needed.
 
 ```sql
 INSERT INTO dbo.HospitalSite (site_code, site_name, city, country)
@@ -184,7 +182,7 @@ VALUES ('WBK-GEN', N'Westbrook General Hospital', N'London', N'England');
 
 **Participant**
 
-All five pseudonymised participants are from the reference data (data/Participants.csv). Only the study code identifies them, no names are held.
+All five pseudonymised participants are from the reference data (data/Participant.csv). Only the study code identifies them, no names are held.
 
 ```sql
 INSERT INTO dbo.Participant (study_code, date_of_birth, sex_at_birth, registration_date)
@@ -196,7 +194,7 @@ VALUES ('WBK-001', '1958-04-12', 'Male', '2021-11-03');
 
 **InactivationReason**
 
-The six standardised reasons are from the reference data (data/InactivationReasons.csv). They form the controlled vocabulary that `Enrollment` references when a participant leaves a trial.
+The six standardised reasons are from the reference data (data/InactivationReason.csv). They form the controlled vocabulary that `Enrollment` references when a participant leaves a trial.
 
 ```sql
 INSERT INTO dbo.InactivationReason (reason_code, reason_description)
@@ -205,7 +203,7 @@ VALUES ('consent_withdrawn', N'Participant withdrew their consent to take part i
 
 **TrialSite**
 
-This data is entirely my own, the reference data contained information regarding which trials running at a site. I linked CARDIOPROTECT and BREATHE to two sites each and MOBILISE to one. Both FKs are looked up by business key (registration number and site code).
+This data is entirely my own --- the reference data contains no information about which trial runs at which site. I linked CARDIOPROTECT and BREATHE to two sites each and MOBILISE to one. Both FKs are looked up by business key (registration number and site code).
 
 ```sql
 INSERT INTO dbo.TrialSite (trial_id, site_id, opened_date, closed_date)
@@ -217,7 +215,7 @@ VALUES (
 
 **ConsentVersion**
 
-The four consent versions are from the reference data (data/ConsentVersions.csv), which identifies each trial by its registration number. I resolve that to `trial_id` with a subquery rather than hardcoding the IDENTITY value.
+The four consent versions are from the reference data (data/ConsentVersion.csv), which identifies each trial by its registration number. I resolve that to `trial_id` with a subquery rather than hardcoding the IDENTITY value.
 
 ```sql
 INSERT INTO dbo.ConsentVersion (trial_id, version_number, effective_from, wording_text)
@@ -267,6 +265,8 @@ VALUES (
 
 ### Query 1: Current consent wording for CARDIOPROTECT
 
+**Clinical question.** Before conducting a consent discussion with a participant, a research nurse needs to retrieve the current wording of the consent form for the CARDIOPROTECT trial --- the version that came into effect most recently. Show the version number, the date it came into effect, and the full wording text.
+
 ```sql
 SELECT TOP (1) cv.version_number, cv.effective_from, cv.wording_text
 FROM   dbo.ConsentVersion cv
@@ -282,9 +282,11 @@ ORDER  BY cv.effective_from DESC;
 
 **Discussion.** The query filters to CARDIOPROTECT, orders versions by `effective_from` descending and keeps the top row, so it always returns the latest version even after future amendments. 
 
-*Data quality:* it relies on `effective_from` being accurate, a new version entered with a wrong or missing effective date could show the nurse an out-of-date wording. However, I accounted for this in the table design with a `NOT NULL` constraint on `effective_from` and a `CHECK (effective_from >= start_date)` to prevent errors in the effective dates.
+*Data quality:* it relies on `effective_from` being accurate. The `NOT NULL` constraint prevents a missing date, but a wrong-yet-plausible date cannot be caught by any constraint and could show the nurse out-of-date wording.
 
 ### Query 2: Monthly trial status report
+
+**Clinical question.** A trial coordinator is preparing a monthly status report. She needs a summary showing each trial, its current status, how long it has been running in days, and whether it has an end date recorded or is still ongoing. Order the results with active trials first, then recruiting, then all others.
 
 ```sql
 SELECT ct.trial_name, ct.status,
@@ -308,6 +310,8 @@ snapshot. It would be a great query in a dynamic report such as Power BI or Tabl
 
 ### Query 3: Trial history for participant WBK-003
 
+**Clinical question.** A research nurse is about to meet with participant WBK-003 and wants to see their full trial history: every trial they have ever been enrolled in, when they enrolled, whether they are still active, and if not why they left. Show the trial name, enrolment date, inactivation date, and inactivation reason code, ordered by enrolment date.
+
 ```sql
 SELECT ct.trial_name, e.enrolment_date, e.inactivation_date, ir.reason_code
 FROM   dbo.Enrollment       e
@@ -325,13 +329,13 @@ ORDER  BY e.enrolment_date;
 
 
 **Discussion.** The `LEFT JOIN` to `InactivationReason` is used because an active
-enrolment might have a NULL inactivation reason and an INNER join would then silently drop it. Additionally, in my design, `Enrollment` stores `trial_id` directly (as part of its composite FK to `TrialSite`). Therefore `ClinicalTrial` is joined straight off it with no `TrialSite` hop needed. 
+enrolment always has a NULL inactivation reason and an INNER join would silently drop it. Additionally, in my design, `Enrollment` stores `trial_id` directly (as part of its composite FK to `TrialSite`). Therefore `ClinicalTrial` is joined straight off it with no `TrialSite` hop needed. 
 
-*Data quality:* a participant who left but whose `inactivation_reason_id` was never populated would show a leaving date with a blank reason. This is why in the creation of the table, I included the paired-null check constraint to prevents this.
+*Data quality:* a participant who left but whose `inactivation_reason_id` was never populated would show a leaving date with a blank reason. This is why in the creation of the table, I included the paired-null check constraint to prevent this.
 
 ### Query 4: Audit of currently active enrolments
 
-
+**Clinical question.** A clinical research associate is auditing active enrolments across all trials. She needs a report showing each currently **active** participant, alongside the trial they are enrolled in, the hospital site where they are based, and the date they enrolled. Order by trial name then enrolment date.
 
 ```sql
 SELECT p.study_code, ct.trial_name, hs.site_name, e.enrolment_date
@@ -349,7 +353,7 @@ ORDER  BY ct.trial_name, e.enrolment_date;
 
 
 **Discussion.** "Active" is derived from `inactivation_date IS NULL`. Again, as I used a composite FK in my table design, `Enrollment` stores both `trial_id` and `site_id` directly, so `ClinicalTrial` and `HospitalSite`
-are joined straight off it. This avoid the `TrialSite` hop needed to reconstruct where each active participant sits. 
+are joined straight off it. This avoids the `TrialSite` hop needed to reconstruct where each active participant sits. 
 
 *Data quality:* the definition of "active" depends on inactivation being recorded promptly as it is derived from a NULL value in the `inactivation_date` column. A participant who has left but whose exit was not entered would wrongly appear here.
 
@@ -385,14 +389,15 @@ GROUP  BY hs.site_name, hs.city
 ORDER  BY total_participants DESC;
 ```
 
-<!-- TODO: run Query 5bis, save the grid as screenshot/query5bis.png, then uncomment:
+
 ![Query 5bis output grid (VS Code mssql extension, SQL Server 2025).](screenshot/query5bis.png){width=100%}
--->
+
 
 *Data quality:* the two queries return different, equally "correct" numbers from the same data: Query 5 gives Westbrook General and St Katherine's 4 each, Query 5bis gives 3 each (WBK-002 and WBK-003 each enrolled in a second trial at the same site). This is a classic reporting issue I have faced in my company: teams answering the same loosely worded request publish figures that disagree, and reconciling them afterwards costs time and trust. I always say: *ask twice, report once* --- clarify the request before running the query.
 
 ### Query 6: Trials with an amended protocol
 
+**Clinical question.** The regulatory affairs team wants to identify trials where the protocol has been amended, meaning more than one consent version exists. Show the trial name, current status, and the number of consent versions issued, ordered by number of versions descending. Only show trials where more than one version has been recorded.
 
 ```sql
 SELECT ct.trial_name, ct.status, COUNT(cv.consent_version_id) AS version_count
@@ -415,6 +420,7 @@ ORDER  BY version_count DESC;
 
 ### Query 7: Most recently enrolled participant per site
 
+**Clinical question.** The research governance team wants to identify the most recently enrolled participant at each hospital site across all trials, to prioritise follow-up contact for new joiners. Show the participant study code, trial name, site name, and enrolment date. Only show **the most recently** enrolled participant per site.
 
 ```sql
 WITH RankedEnrolments AS (
@@ -438,7 +444,7 @@ ORDER  BY site_name;
 
 
 
-**Discussion.** As seen in class, I used `RANK()` to partition by site and ordered by enrolment date descending ranks each site's enrolments. Because tied dates share a rank, two participants enrolled at the same site on the same day would both be returned rather than one being picked arbitrarily. `Enrollment` stores `trial_id` and `site_id` directly, so `ClinicalTrial` and `HospitalSite` are joined straight off it with no `TrialSite` hop needed.
+**Discussion.** As seen in class, I used `RANK()` partitioned by site and ordered by enrolment date descending to rank each site's enrolments. Because tied dates share a rank, two participants enrolled at the same site on the same day would both be returned rather than one being picked arbitrarily. `Enrollment` stores `trial_id` and `site_id` directly, so `ClinicalTrial` and `HospitalSite` are joined straight off it with no `TrialSite` hop needed.
 
 *Data quality:* enrolment is recorded only to the day, so joint "most recent" participants are indistinguishable. A finer timestamp would be needed to single one out such as `DATETIME`.
 
@@ -456,9 +462,9 @@ Direct identifiers such as names would live in a separate, access-controlled mas
 
 Consent records can mislead because they are true. The scenario requires that when a protocol is amended, every active participant signs the new consent version ("*Each participant must sign the current consent form when they are enrolled. If the protocol changes during their participation and a new consent form is issued, they must sign the new version too.*"). 
 
-The database can only validate rows that exist, not rows that are missing. A participant can remain "active" in CARDIOPROTECT with their only signature on version 1, signed before the amendment. Anyone checking whether they consented will find a correctly witnessed record and conclude that they have. Nothing on that row says *superseded*  or *has been superseded*. The registry looks compliant, yet the participant is potentially being treated under wording they never agreed to. The data is not wrong, it is incomplete. 
+The database can only validate rows that exist, not rows that are missing. A participant can remain "active" in CARDIOPROTECT with their only signature on version 1, signed before the amendment. Anyone checking whether they consented will find a correctly witnessed record and conclude that they have. Nothing on that row says *superseded*. The registry looks compliant, yet the participant is potentially being treated under wording they never agreed to. The data is not wrong, it is incomplete. 
 
-To detect it, I would write an query flagging every active enrolment that has no signing for its trial's current consent version. I would wrap that query in a view and run it on a schedule with a SQL Server Agent job. I would feed the view into a reporting tool. However, this is **not a database fix**. The database cannot force a missing row into existence. The view and the job only highlight the gap for humans to act on.
+To detect it, I would write a query flagging every active enrolment that has no signing for its trial's current consent version. I would wrap that query in a view and run it on a schedule with a SQL Server Agent job. I would feed the view into a reporting tool. However, this is **not a database fix**. The database cannot force a missing row into existence. The view and the job only highlight the gap for humans to act on.
 
 ## Why consent records are append-only, and how to enforce it
 
