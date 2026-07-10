@@ -8,6 +8,7 @@ csl: american-medical-association.csl
 format:
   pdf:
     documentclass: report
+    classoption: [table]
     papersize: a4
     geometry:
       - margin=25mm
@@ -27,6 +28,7 @@ format:
         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
         \usepackage{float}
         \usepackage{eso-pic}
+        \rowcolors{2}{blue!10}{white}
         \AddToShipoutPictureFG*{\AtPageLowerLeft{\put(\LenToUnit{0.5\paperwidth},\LenToUnit{3cm}){\makebox(0,0){\includegraphics[width=0.45\textwidth]{coversheet_image.png}}}}}
 mermaid:
   theme: neutral
@@ -89,10 +91,12 @@ Every foreign key targets the surrogate key, never the business key. This render
 ### Column constraints 
 
 * Phase/status/sex use `CHECK ... IN (...)` to force controlled vocabularies and
-clean categorical data for reporting. **Caveat:** the `sex_at_birth` field was intepretated as biological sex and not gender. It only have two values captured for this field. This is a design choice to keep the schema simple and **not** a statement on gender identity. In a production DB this would be reviewed to follow best practice and local healthcare inclusivity guidance.
+clean categorical data for reporting. **Caveat:** the `sex_at_birth` field was interpreted as biological sex and not gender. It only has two values captured for this field. This is a design choice to keep the schema simple and **not** a statement on gender identity. In a production DB this would be reviewed to follow best practice and local healthcare inclusivity guidance.
 
 * I use date checks (`end_date >= start_date`, `closed_date >= opened_date`,
-`inactivation_date >= enrolment_date`) throughout to prevent logically impossible records. 
+`inactivation_date >= enrolment_date`, `date_of_birth < registration_date`) throughout to prevent logically impossible records. The first three use `>=` because a same-day pair is legitimate; the birth-date check is deliberately strict (`<`) as a participant cannot register with the research office on or before the day they were born.
+
+* A `CHECK (version_number > 0)` on `ConsentVersion` rejects zero or negative version numbers, keeping the version sequence meaningful.
 
 * I added the paired-null check on `Enrollment` guarantees a leaving date never appears without a reason and vice-versa.
 
