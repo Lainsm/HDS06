@@ -37,16 +37,16 @@ execute:
 
 # Introduction {.unnumbered}
 
-This report designs a fictional relational database for the Westbrook University Hospitals
-NHS Trust Clinical Trial Participant Registry, implements it in Microsoft SQL
-Server (T-SQL), populates it and answers seven fictional clinical questions.
+This report designs a fictional relational database (DB) for the Westbrook University Hospitals
+NHS Trust Clinical Trial Participant Registry. It is a Microsoft SQL
+Server (T-SQL), populated with fictional data. The DB is then used to answer seven fictional clinical questions via distinct SQL queries.
 
 ::: callout-note
-**Reproducing the results.** Run `script/HDS_DB_LAINSBURY_2026.sql`. This is the requested
+**Reproducing the results.** Please run `script/HDS_DB_LAINSBURY_2026.sql`. This is the requested
 single self-contained script that creates the database, tables, data, trigger
 and queries in order. It ran without errors from start to finish on my machine. Each query
-returns one result grid, screenshotted below (VS Code mssql extension, local
-SQL Server).
+returns one result grid, screenshotted below. I used VS Code with the mssql extension on a local
+SQL Server.
 :::
 
 {{< pagebreak >}}
@@ -55,52 +55,64 @@ SQL Server).
 
 ## Entity Relationship Diagram
 
-The schema has eight tables: `TrialSite` resolves the trial site many-to-many, `Enrollment` records a participant's participation in a trial at a site, and `ConsentSigning` is the append-only audit log of consent events. The ERD is shown in crow's-foot notation in @fig-erd.
+My database schema (dbo.) has eight tables. I added 3 additional tables from the five generated from the .csv files: `TrialSite` resolves the trial site many-to-many, `Enrollment` records a participant's participation in a trial at a site and `ConsentSigning` is the append-only audit log of consent events. The ERD is shown in crow's-foot notation with the logic between the connecton in @fig-erd.
 
 ![Entity Relationship Diagram (crow's-foot notation).](erd.png){#fig-erd width=100%}
 
-## Table Descriptions
+## Table Design Choices
+
+### Foreign and Unique Key Design Choices
 
 Every table uses a surrogate `INT IDENTITY` primary key for internal
-joins, plus one or more **business UNIQUE keys** for the values
-clinical staff actually recognise. Every foreign key targets the
-surrogate key, never the business key. This is a preference for data integrity and maintainability. An externally issued code
-(ISRCTN number, site code, study code) can then be corrected in one
-parent row without cascading. Business keys appear only in the INSERT
-look-up subqueries.
+joins, plus one or more **UNIQUE keys (or business keys)** for the values clinical staff would actually recognise. 
+
+Every foreign key targets the surrogate key, never the business key. This render the intake slighlty more verbose but is a personal choice for data integrity and maintainability. This study uses externally issued code such as the ISRCTN number. If they were to change, they can then be corrected in one parent row without cascading. The unique keys are used in INSERT look-up subqueries. In the real world, the business keys would be known to the data-entry staff and the look-ups would be hidden behind a user interface/form or via a staging table.
+
+### Table Descriptions
 
 | Table | Purpose and key design choices |
 |:------|:-------------------------------------------------------------------------------|
-| **ClinicalTrial** | One row per trial. PK `trial_id` (IDENTITY). UNIQUE `registration_number` --- the ISRCTN number is the externally recognised, never-reused natural key. `CHECK` on `phase` (I/II/III/IV) and `status` enforce the controlled vocabularies; `CHECK (end_date >= start_date)` prevents impossible ranges. Children reference `trial_id`, never the ISRCTN number. |
-| **HospitalSite** | One row per site. PK `site_id`. UNIQUE `site_code` --- short codes (e.g. `WBK-GEN`) are the operational natural key. Children reference `site_id`, never `site_code`. |
-| **Participant** | One pseudonymised participant per row; **no names held**. PK `participant_id`. UNIQUE `study_code` --- the pseudonym is the only safe external identifier. `CHECK` on `sex_at_birth` (biological sex at birth, not gender identity --- only two values are recorded); `CHECK (date_of_birth < registration_date)`. `Enrollment` references `participant_id`, never the study code. |
-| **InactivationReason** | Controlled vocabulary of reasons a participant leaves a trial, so exits report consistently across trials. PK `reason_id`. UNIQUE `reason_code` --- the stable report token. `Enrollment` references `reason_id`, so codes can be renamed safely. |
-| **TrialSite** | **Link table** resolving the trial--site many-to-many; also records when each site opened/closed for recruitment on that trial. Composite PK `(trial_id, site_id)` --- the pairing is the row's identity, so no surrogate is used (unlike every other table); FKs to ClinicalTrial and HospitalSite; `CHECK (closed_date >= opened_date)`. Both FKs reference the parents' surrogate keys. |
-| **ConsentVersion** | Every approved version of a trial's consent form, including wording and effective date; old versions never overwritten. PK `consent_version_id`. `UNIQUE (trial_id, version_number)`; FK to ClinicalTrial; `wording_text` is `NVARCHAR(MAX)`. The FK references `trial_id`, not the ISRCTN number. |
-| **Enrollment** | A participant enrolled in a trial at a specific site. Carries `(trial_id, site_id)` as a composite FK straight to `TrialSite`, so trial **and** site are captured together and a participant can only enrol where the trial actually runs. Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite (composite), InactivationReason; `UNIQUE (participant_id, trial_id, site_id)`; paired-null `CHECK`; filtered unique index for "one active trial at a time". All three FKs reference surrogate keys. |
+| **ClinicalTrial** | One row per trial. PK `trial_id` (IDENTITY). UNIQUE `registration_number` (ISRCTN number) is the externally recognised natural key. Children reference `trial_id`, never the ISRCTN number. |
+| **HospitalSite** | One row per site. PK `site_id`. UNIQUE `site_code` (e.g. `WBK-GEN`) are the operational natural key. Children reference `site_id`, never `site_code`. |
+| **Participant** | One pseudonymised participant per row, **no names held**. PK `participant_id`. UNIQUE `study_code`, the pseudonym, is the only safe external identifier. `CHECK (date_of_birth < registration_date)`. `Enrollment` references `participant_id`, never the study code. |
+| **InactivationReason** | Controlled vocabulary of reasons a participant leaves a trial, so exits report consistently across trials. PK `reason_id`. the UNIQUE `reason_code` is the stable report token. `Enrollment` references `reason_id`, so codes can be renamed safely. |
+| **TrialSite** | **Link table** resolving the trial- site many-to-many. It also records when each site opened/closed for recruitment on that trial. I use a composite PK `(trial_id, site_id)`. The pairing is the row's identity, so no surrogate is used (unlike every other table). FKs to ClinicalTrial and HospitalSite. Both FKs reference the parents' surrogate keys. |
+| **ConsentVersion** | Every approved version of a trial's consent form, including wording and effective date. Any old consent versions is never overwritten (under the principle of always add rather than overwrite). PK `consent_version_id`. `UNIQUE (trial_id, version_number)`. The FK references `trial_id`, not the ISRCTN number to follow the same design pattern as other tables. |
+| **Enrollment** | A participant enrolled in a trial at a specific site. It carries `(trial_id, site_id)` as a composite FK straight to `TrialSite`, so trial **and** site are captured together and a participant can only enrol where the trial actually runs. Exit is recorded without deleting the row. PK `enrollment_id`; FKs to Participant, TrialSite (composite), InactivationReason; `UNIQUE (participant_id, trial_id, site_id)`; paired-null `CHECK`. |
 | **ConsentSigning** | Append-only log of every consent signing event: when, which version, who witnessed. PK `consent_signing_id`; FKs to Enrollment and ConsentVersion; `UNIQUE (enrollment_id, consent_version_id)`; protected by an append-only trigger. Both FKs reference surrogate keys. `CHECK` restricts `witnessed_by` to name characters (forename + surname). |
 
 : Table descriptions and key design choices {tbl-colwidths="[22,78]"}
 
-**Check constraints.** 
+## Column Design Choices
 
-* Phase/status/sex use `CHECK ... IN (...)` to guarantee
-clean categorical data for reporting. 
+### Column constraints 
 
-* Date checks (`end_date >= start_date`, `closed_date >= opened_date`,
-`inactivation_date >= enrolment_date`) prevent logically impossible records. 
+* Phase/status/sex use `CHECK ... IN (...)` to force controlled vocabularies and
+clean categorical data for reporting. **Caveat:** the `sex_at_birth` field was intepretated as biological sex and not gender. It only have two values captured for this field. This is a design choice to keep the schema simple and **not** a statement on gender identity. In a production DB this would be reviewed to follow best practice and local healthcare inclusivity guidance.
 
-* The paired-null check on `Enrollment` guarantees a leaving date never appears without
-a reason and vice-versa.
+* I use date checks (`end_date >= start_date`, `closed_date >= opened_date`,
+`inactivation_date >= enrolment_date`) throughout to prevent logically impossible records. 
 
-## NULL and NOT NULL Decisions
+* I added the paired-null check on `Enrollment` guarantees a leaving date never appears without a reason and vice-versa.
+
+* A `CHECK` restricts `witnessed_by` to name characters only (forename + surname). Names like José shall therefore be written as Jose. 
+
+* I used `NVARCHAR(MAX)` for consent wording because it can be long and multi-paragraph. The other text fields are sized to fit the expected content.
+
+* A filtered unique index (UX_Enrollment_OneActivePerParticipant) on Enrollment.participant_id WHERE inactivation_date IS NULL enforces the business rule that a participant may be actively enrolled in only one trial at a time as requested in the brief. This allows unlimited historical enrolments while preventing concurrent participation.
+
+* I added a trigger to enforce the append-only rule on ConsentSigning. It rejects any UPDATE or DELETE operation with a clear error message (51000), while leaving INSERT free. This guarantees the rule regardless of which application or user connects, which a permission grant alone would not.
+
+### NULL and NOT NULL Decisions
+
+I have not included every column in the table below, only those where the NULLability decision is not self-evident or requires justification. The table below explains why a column is allowed to be NULL or must be NOT NULL.
 
 | Column | Decision | Rationale |
 |:-----------------------|:---------|:------------------------------------------------|
 | `ClinicalTrial.end_date` | NULL | NULL is meaningful: the trial is still running. Current trials have no end date *yet*. |
-| `ClinicalTrial.start_date`, `status`, `phase` | NOT NULL | A trial cannot exist without these. |
+| `ClinicalTrial.start_date`, `status`, `phase` | NOT NULL | A trial cannot exist without these columns populated. |
 | `TrialSite.closed_date` | NULL | The site can still be open for recruitment on that trial. |
-| `Enrollment.inactivation_date`, `inactivation_reason_id` | NULL (paired) | The classic "meaningful absence". The paired-null `CHECK` keeps them in step. |
+| `Enrollment.inactivation_date`, `inactivation_reason_id` | NULL (paired) | This is  a "meaningful absence". The paired-null `CHECK` keeps them in step. |
 | `Participant.date_of_birth`, `registration_date`, `sex_at_birth` | NOT NULL | Required for eligibility, age and demographic reporting. |
 | `ConsentSigning.signed_date`, `witnessed_by` | NOT NULL | A consent event without a date or witness is not a valid consent event. |
 | `ConsentVersion.wording_text`, `effective_from` | NOT NULL | A consent version is meaningless without its wording and the date it took effect. |
