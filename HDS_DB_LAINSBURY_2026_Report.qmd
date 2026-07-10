@@ -3,7 +3,7 @@ title: "HDS06 - Designing and Querying a Clinical Trial Participant Registry"
 subtitle: "Westbrook University Hospitals NHS Trust, Clinical Trial Participant Registry"
 author: "Malik J. Lainsbury | [github](https://github.com/Lainsm/HDS06)"
 date: today
-bibliography: biblio.bib
+bibliography: bib.bib
 csl: american-medical-association.csl
 format:
   pdf:
@@ -28,7 +28,7 @@ format:
         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
         \usepackage{float}
         \usepackage{eso-pic}
-        \rowcolors{2}{blue!10}{white}
+        \rowcolors{2}{gray!25}{white}
         \AddToShipoutPictureFG*{\AtPageLowerLeft{\put(\LenToUnit{0.5\paperwidth},\LenToUnit{3cm}){\makebox(0,0){\includegraphics[width=0.45\textwidth]{coversheet_image.png}}}}}
 mermaid:
   theme: neutral
@@ -98,9 +98,9 @@ clean categorical data for reporting. **Caveat:** `sex_at_birth` is interpreted 
 
 * A `CHECK (version_number > 0)` on `ConsentVersion` rejects zero or negative version numbers, keeping the version sequence meaningful.
 
-* I added the paired-null check on `Enrollment` guarantees a leaving date never appears without a reason and vice-versa.
+* The paired-null check on `Enrollment` guarantees a leaving date never appears without a reason, and vice-versa.
 
-* A `CHECK` restricts `witnessed_by` to name characters only (forename + surname). Names like José shall therefore be written as Jose. 
+* A `CHECK` restricts `witnessed_by` to name characters only (forename + surname). Names like José must be written as Jose.
 
 * I used `NVARCHAR(MAX)` for consent wording because it can be long and multi-paragraph. The other text fields are sized to fit the expected content.
 
@@ -454,7 +454,7 @@ ORDER  BY site_name;
 
 ## Why no participant names?
 
-Storing only a `study_code` pseudonymises the registry, following the data-minimisation principle of GDPR Article 5(1)(c)[@art5gdpr]. Additionally, The Caldicott Principles [@caldicott] justify every use of confidential information and use the minimum necessary,  reinforcing the same point. A breach of the trial database would therefore not directly expose identities, and names add no information the registry needs to fulfil its research purpose.
+Storing only a `study_code` pseudonymises the registry, following the data-minimisation principle of GDPR Article 5(1)(c)[@art5gdpr]. The Caldicott Principles [@caldicott] --- justify every use of confidential information, use the minimum necessary --- reinforce the point. A breach of the trial database would therefore not directly expose identities, and names add no information the registry needs to fulfil its research purpose.
 
 Direct identifiers such as names would live in a separate, access-controlled master linkage list held by the research office. In this design, researchers can query and report entirely on `study_code`, so trial analyses can be shared more freely because they carry no personal identifiers. The cost is potential friction and a dependency on that linkage. A broken or out-of-date mapping could mean a participant cannot be reached for a safety issue. Using a pseudonymised design therefore trades day-to-day convenience for a much stronger confidentiality and information-governance position, critical when dealing with personal data.
 
@@ -468,7 +468,7 @@ To detect it, I would write a query flagging every active enrolment that has no 
 
 ## Why consent records are append-only, and how to enforce it
 
-Consent records are the legal and ethical evidence that each participant agreed to the specific protocol version in force **at the time**. They must be append-only because consent is a historical fact. This requires trial-critical records to carry a complete, tamper-evident audit trail. Editing or deleting a signing event would destroy the evidence that regulators, sponsors and ethics committees rely on to prove valid consent existed. If the rule were broken, a re-consent after a protocol amendment could be silently overwritten or a withdrawn consent erased, making it impossible to demonstrate which wording a participant actually agreed to and undermining every downstream analysis that assumes valid consent.
+Consent records are the legal and ethical evidence that each participant agreed to the specific protocol version in force **at the time**. They must be append-only because consent is a historical fact, and ICH E6 Good Clinical Practice [@ICHE6Good2002] requires trial-critical records to carry a complete, tamper-evident audit trail. Editing or deleting a signing event would destroy the evidence that regulators, sponsors and ethics committees rely on to prove valid consent existed. If the rule were broken, a re-consent after a protocol amendment could be silently overwritten or a withdrawn consent erased, making it impossible to demonstrate which wording a participant actually agreed to and undermining every downstream analysis that assumes valid consent.
 
 I enforced this at the database level with an `INSTEAD OF UPDATE, DELETE` trigger on `ConsentSigning` that rejects any such operation with an error, while leaving `INSERT` free (see `script/HDS_DB_LAINSBURY_2026.sql`). This guarantees the rule regardless of which application or user connects, which a permission grant alone would not.
 
