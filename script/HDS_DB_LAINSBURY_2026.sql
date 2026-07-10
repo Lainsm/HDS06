@@ -317,12 +317,17 @@ GO
 
 /* ###################### insert additional ops data ###################### */
 
-/* 
+/*
    data added to make the seven queries meaningful:
      - TrialSite      : which sites run which trials (and when they opened/closed)
      - Enrollment     : participants enrolled in trials at sites, incl. history
      - ConsentSigning : append-only consent signing events (incl. re-consent)
 
+   This data deliberately covers the brief's minimums:
+     - trials linked to at least two different sites (TrialSite)
+     - WBK-003 has enrolments, one active and one inactivated (Query 3)
+     - a participant signed two CARDIOPROTECT consent versions (Query 6 / worked example)
+     - enrolments spread across two sites, plus one site with none (Queries 5 and 7)
    ============================================================================ */
 
 USE HDS_ClinicalTrial;
@@ -339,7 +344,7 @@ VALUES
  ((SELECT trial_id FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
   (SELECT site_id  FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'), '2023-03-01', NULL),
  ((SELECT trial_id FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN10234567'),
-  (SELECT site_id  FROM dbo.HospitalSite  WHERE site_code='STK-NOR'), '2023-04-01', NULL), -- data is authored to allow to answer queries
+  (SELECT site_id  FROM dbo.HospitalSite  WHERE site_code='STK-NOR'), '2023-04-01', NULL), -- second CARDIOPROTECT site, so enrolments can span two sites (Queries 5 and 7)
  ((SELECT trial_id FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678'),
   (SELECT site_id  FROM dbo.HospitalSite  WHERE site_code='WBK-GEN'), '2024-06-01', NULL),
  ((SELECT trial_id FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678'),
@@ -399,7 +404,9 @@ VALUES
   '2023-05-20', '2023-11-10',
   (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='death'));
 
-/* WBK-005 : active in BREATHE at Westbrook General */
+/* WBK-005 : active in BREATHE at Westbrook General
+   (closed further down and transitions to CARDIOPROTECT - the "left one trial,
+   joined another" pattern from the scenario) */
 INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
  ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-005'),
@@ -499,7 +506,8 @@ VALUES
        AND cv.version_number = 2),
   '2024-10-01', N'Sara Patel');
 
-/* WBK-004 - CARDIOPROTECT v1 (enrolled before the amendment) */
+/* WBK-004 - CARDIOPROTECT v1 (enrolled before the amendment; they left the
+   trial before v2 came into effect, so no re-consent was ever required) */
 INSERT INTO dbo.ConsentSigning (enrollment_id, consent_version_id, signed_date, witnessed_by)
 VALUES
  ((SELECT e.enrollment_id FROM dbo.Enrollment e
@@ -533,7 +541,10 @@ GO
    deliberately receives NO enrolments, so Query 5 demonstrably includes a
    site with a zero count (LEFT JOIN behaviour). */
 
-/* WBK-005 : close out the active BREATHE enrolment (in place) */
+/* WBK-005 : close out the active BREATHE enrolment (in place). The filtered
+   unique index allows only ONE active enrolment per participant, so the old
+   enrolment must be closed before the new one is inserted. The original row
+   is preserved as the brief requires - only the inactivation fields are set. */
 UPDATE dbo.Enrollment
 SET    inactivation_date      = '2025-03-15',
        inactivation_reason_id = (SELECT reason_id FROM dbo.InactivationReason WHERE reason_code='clinician_decision')
@@ -541,7 +552,9 @@ WHERE  participant_id = (SELECT participant_id FROM dbo.Participant   WHERE stud
   AND  trial_id       = (SELECT trial_id       FROM dbo.ClinicalTrial WHERE registration_number='ISRCTN20345678')
   AND  site_id        = (SELECT site_id        FROM dbo.HospitalSite  WHERE site_code='WBK-GEN');
 
-/* WBK-005 : new active enrolment - CARDIOPROTECT at St Katherine's (most recent overall) */
+/* WBK-005 : new active enrolment - CARDIOPROTECT at St Katherine's. This is the
+   most recent enrolment overall, so Query 7's RANK() has a real choice to make
+   at St Katherine's rather than a single-row partition. */
 INSERT INTO dbo.Enrollment (participant_id, trial_id, site_id, enrolment_date, inactivation_date, inactivation_reason_id)
 VALUES
  ((SELECT participant_id FROM dbo.Participant   WHERE study_code='WBK-005'),
@@ -694,6 +707,22 @@ FROM   dbo.HospitalSite hs
 LEFT   JOIN dbo.Enrollment e ON e.site_id = hs.site_id
 GROUP  BY hs.site_name, hs.city
 ORDER  BY total_enrolments DESC;
+GO
+
+/* ----------------------------------------------------------------------------
+   QUERY 5bis (companion to Query 5)
+   Same shape but counts DISTINCT participants instead of enrolments. A
+   participant who left one trial and joined another at the same site counts
+   once here but twice in Query 5 - the two reports answer subtly different
+   questions ("how many participants" vs "total enrolment count").
+   ---------------------------------------------------------------------------- */
+SELECT hs.site_name,
+       hs.city,
+       COUNT(DISTINCT e.participant_id) AS total_participants
+FROM   dbo.HospitalSite hs
+LEFT   JOIN dbo.Enrollment e ON e.site_id = hs.site_id
+GROUP  BY hs.site_name, hs.city
+ORDER  BY total_participants DESC;
 GO
 
 /* ----------------------------------------------------------------------------
