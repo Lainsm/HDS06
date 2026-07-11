@@ -21,10 +21,10 @@ erDiagram
     ClinicalTrial      ||--o{ TrialSite       : "runs at"
     HospitalSite       ||--o{ TrialSite       : "hosts"
     ClinicalTrial      ||--o{ ConsentVersion  : "has versions"
-    Participant        ||--o{ Enrollment      : "enrols via"
-    TrialSite          ||--o{ Enrollment      : "place of"
-    InactivationReason ||--o{ Enrollment      : "explains exit"
-    Enrollment         ||--o{ ConsentSigning  : "consented by"
+    Participant        ||--o{ Enrolment      : "enrols via"
+    TrialSite          ||--o{ Enrolment      : "place of"
+    InactivationReason ||--o{ Enrolment      : "explains exit"
+    Enrolment         ||--o{ ConsentSigning  : "consented by"
     ConsentVersion     ||--o{ ConsentSigning  : "signed in"
 
     ClinicalTrial {
@@ -68,8 +68,8 @@ erDiagram
         date effective_from
         nvarchar wording_text
     }
-    Enrollment {
-        int enrollment_id PK
+    Enrolment {
+        int enrolment_id PK
         int participant_id FK
         int trial_id FK
         int site_id FK
@@ -79,7 +79,7 @@ erDiagram
     }
     ConsentSigning {
         int consent_signing_id PK
-        int enrollment_id FK
+        int enrolment_id FK
         int consent_version_id FK
         date signed_date
         nvarchar witnessed_by
