@@ -496,36 +496,6 @@ END;
 
 # Appendix A: Data dictionary {.unnumbered}
 
-A complete column-level reference for every table, derived from the
-`CREATE TABLE` section of `script/HDS_DB_LAINSBURY_2026.sql`. *Key:* PK = primary
-key, FK = foreign key, UK = unique (business) key. All surrogate `*_id` keys are
-`INT IDENTITY(1,1)`.
-
-This dictionary is not static documentation: the metadata section of
-`script/HDS_DB_LAINSBURY_2026.sql` stores every table description  **in the database
-catalog itself** as `MS_Description` extended properties. The dictionary can
-therefore be regenerated at any time (or consumed by data-catalogue tooling) by
-querying the system views, so the metadata travels with the schema rather than
-living in a document that can drift out of date:
-
-```sql
-SELECT t.name                                        AS table_name,
-       c.name                                        AS column_name,
-       TYPE_NAME(c.user_type_id)                     AS data_type,
-       IIF(c.is_nullable = 1, 'NULL', 'NOT NULL')    AS nullability,
-       CAST(ep.value AS NVARCHAR(400))               AS column_description
-FROM   sys.tables  t
-JOIN   sys.columns c ON c.object_id = t.object_id
-LEFT   JOIN sys.extended_properties ep
-       ON  ep.major_id = c.object_id AND ep.minor_id = c.column_id
-       AND ep.class = 1 AND ep.name = 'MS_Description'
-ORDER  BY t.name, c.column_id;
-```
-
-```{=latex}
-\footnotesize
-```
-
 ## ClinicalTrial {.unnumbered}
 
 | Column | Type | Null | Key | Notes |
